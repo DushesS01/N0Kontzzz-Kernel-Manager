@@ -14,8 +14,8 @@ configure <com.android.build.api.dsl.ApplicationExtension> {
         applicationId = "id.nkz.nokontzzzmanager"
         minSdk = 31
         targetSdk = 36
-        versionCode = 106
-        versionName = "1.7.0"
+        versionCode = 107
+        versionName = "1.7.1"
     }
     buildTypes {
         release {
