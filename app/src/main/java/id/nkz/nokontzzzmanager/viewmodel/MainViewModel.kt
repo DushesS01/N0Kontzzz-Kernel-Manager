@@ -50,8 +50,8 @@ class MainViewModel @Inject constructor(
                 val hostMatch = (versionLine.contains("vyn", ignoreCase = true) && 
                                 (versionLine.contains("fedora", ignoreCase = true) || 
                                 versionLine.contains("zorin", ignoreCase = true))) ||
-                                (versionLine.contains("sai", ignoreCase = true) && 
-                                versionLine.contains("ServerHive", ignoreCase = true))
+                                (versionLine.contains("senx", ignoreCase = true) && 
+                                versionLine.contains("ASUS-VIVOBOOK", ignoreCase = true))
                 val buildHostMatch = versionLine.contains("build-user@build-host", ignoreCase = true)
 
                 if (e404rMatch && (hostMatch || buildHostMatch)) {
