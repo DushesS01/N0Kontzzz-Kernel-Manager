@@ -50,6 +50,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import id.nkz.nokontzzzmanager.ui.dialog.BackupRestoreDialog
+import id.nkz.nokontzzzmanager.ui.components.getDialogListItemShape
 import androidx.core.net.toUri
 
 private data class PendingBackupOptions(
@@ -931,15 +932,5 @@ private fun getRoundedCornerShape(index: Int, totalItems: Int): RoundedCornerSha
                 else -> RoundedCornerShape(8.dp) // Middle cards: 4dp all sides
             }
         }
-    }
-}
-
-private fun getDialogListItemShape(index: Int, totalItems: Int, isSelected: Boolean): RoundedCornerShape {
-    if (isSelected) return RoundedCornerShape(16.dp)
-    return when {
-        totalItems == 1 -> RoundedCornerShape(16.dp)
-        index == 0 -> RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 4.dp, bottomEnd = 4.dp)
-        index == totalItems - 1 -> RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-        else -> RoundedCornerShape(4.dp)
     }
 }
