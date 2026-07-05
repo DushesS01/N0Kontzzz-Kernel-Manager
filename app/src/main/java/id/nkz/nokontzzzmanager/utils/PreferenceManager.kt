@@ -12,57 +12,62 @@ class PreferenceManager @Inject constructor(
     @field:ApplicationContext private val context: Context,
 ) {
     companion object {
+        // ── Game & App Monitor ─────────────────────────────────────────
         private const val KEY_TARGET_GAME_PACKAGES = "target_game_packages"
+        private const val KEY_APP_MONITOR_ENABLED = "app_monitor_enabled"
+
+        // ── KGSL / Dirty PTE / Bypass / Fast Charge ────────────────────
         private const val KEY_KGSL_SKIP_ZEROING = "kgsl_skip_zeroing"
         private const val KEY_AVOID_DIRTY_PTE = "avoid_dirty_pte"
         private const val KEY_BYPASS_CHARGING = "bypass_charging"
         private const val KEY_FORCE_FAST_CHARGE = "force_fast_charge"
-        private const val KEY_BATTERY_MONITOR_ENABLED = "battery_monitor_enabled"
-        private const val KEY_APP_MONITOR_ENABLED = "app_monitor_enabled"
-        private const val KEY_BATTERY_CHARGING_ICON_ENABLED = "battery_charging_icon_enabled"
 
+        // ── Battery & Charging ─────────────────────────────────────────
+        private const val KEY_BATTERY_MONITOR_ENABLED = "battery_monitor_enabled"
+        private const val KEY_BATTERY_CHARGING_ICON_ENABLED = "battery_charging_icon_enabled"
         private const val KEY_CHARGING_CONTROL_ENABLED = "charging_control_enabled"
         private const val KEY_CHARGING_CONTROL_STOP_LEVEL = "charging_control_stop_level"
         private const val KEY_CHARGING_CONTROL_RESUME_LEVEL = "charging_control_resume_level"
-
         private const val KEY_AUTO_RESET_ON_REBOOT = "auto_reset_on_reboot"
         private const val KEY_AUTO_RESET_ON_CHARGING = "auto_reset_on_charging"
         private const val KEY_AUTO_RESET_AT_LEVEL = "auto_reset_at_level"
         private const val KEY_AUTO_RESET_TARGET_LEVEL = "auto_reset_target_level"
-
         private const val KEY_MONITOR_AUTO_RESET_ON_REBOOT = "monitor_auto_reset_on_reboot"
         private const val KEY_MONITOR_AUTO_RESET_ON_CHARGING = "monitor_auto_reset_on_charging"
         private const val KEY_MONITOR_AUTO_RESET_AT_LEVEL = "monitor_auto_reset_at_level"
         private const val KEY_MONITOR_AUTO_RESET_TARGET_LEVEL = "monitor_auto_reset_target_level"
 
+        // ── Notification ───────────────────────────────────────────────
         private const val KEY_NOTIFICATION_ICON_STYLE = "notification_icon_style"
-
         const val ICON_STYLE_BATTERY_PERCENT = 0
         const val ICON_STYLE_APP_LOGO = 1
         const val ICON_STYLE_TRANSPARENT = 2
 
+        // ── Network & Storage ──────────────────────────────────────────
         private const val KEY_TCP_CONGESTION_ALGORITHM = "tcp_congestion_algorithm"
         private const val KEY_IO_SCHEDULER = "io_scheduler"
         private const val KEY_APPLY_NETWORK_STORAGE_ON_BOOT = "apply_network_storage_on_boot"
         private const val KEY_LAST_APPLIED_BOOT_ID = "last_applied_boot_id"
+
+        // ── Background Blocker ─────────────────────────────────────────
         private const val KEY_BG_BLOCKLIST = "bg_blocklist"
         private const val KEY_APPLY_BG_BLOCKER_ON_BOOT = "apply_bg_blocker_on_boot"
 
-        // Set on Boot Keys
+        // ── Boot Apply Flags ───────────────────────────────────────────
         private const val KEY_APPLY_PERFORMANCE_MODE_ON_BOOT = "apply_performance_mode_on_boot"
         private const val KEY_APPLY_CPU_ON_BOOT = "apply_cpu_on_boot"
         private const val KEY_APPLY_GPU_ON_BOOT = "apply_gpu_on_boot"
         private const val KEY_APPLY_THERMAL_ON_BOOT = "apply_thermal_on_boot"
         private const val KEY_APPLY_RAM_ON_BOOT = "apply_ram_on_boot"
 
-        // GPU
+        // ── GPU Tuning ─────────────────────────────────────────────────
         private const val KEY_GPU_GOVERNOR = "gpu_governor"
         private const val KEY_GPU_MIN_FREQ = "gpu_min_freq"
         private const val KEY_GPU_MAX_FREQ = "gpu_max_freq"
         private const val KEY_GPU_POWER_LEVEL = "gpu_power_level"
         private const val KEY_GPU_THROTTLING = "gpu_throttling"
 
-        // RAM
+        // ── RAM / VM Tuning ────────────────────────────────────────────
         private const val KEY_ZRAM_ENABLED_PREF = "zram_enabled_pref"
         private const val KEY_ZRAM_DISKSIZE = "zram_disksize"
         private const val KEY_ZRAM_COMPRESSION = "zram_compression"
@@ -73,16 +78,16 @@ class PreferenceManager @Inject constructor(
         private const val KEY_DIRTY_EXPIRE = "dirty_expire"
         private const val KEY_MIN_FREE_MEMORY = "min_free_memory"
 
-        // CPU Per-cluster
+        // ── CPU Per-Cluster ────────────────────────────────────────────
         private const val KEY_CPU_GOV_PREFIX = "cpu_gov_"
         private const val KEY_CPU_MIN_FREQ_PREFIX = "cpu_min_freq_"
         private const val KEY_CPU_MAX_FREQ_PREFIX = "cpu_max_freq_"
         private const val KEY_CPU_CORE_ONLINE_PREFIX = "cpu_core_online_"
 
-        // Performance Mode
+        // ── Performance Mode ───────────────────────────────────────────
         private const val KEY_PERFORMANCE_MODE = "last_applied_performance_mode"
 
-        // FPS Monitor Info
+        // ── FPS Monitor ────────────────────────────────────────────────
         private const val KEY_FPS_LAYER_SEARCH_INFO_DISMISSED = "fps_layer_search_info_dismissed"
     }
 
@@ -110,6 +115,8 @@ class PreferenceManager @Inject constructor(
         return deviceProtectedPrefs().getStringSet(KEY_TARGET_GAME_PACKAGES, emptySet()) ?: emptySet()
     }
 
+    // ── KGSL Skip Pool Zeroing ────────────────────────────────────────
+
     fun setKgslSkipZeroing(enabled: Boolean) {
         credentialPrefs()?.edit {
             putBoolean(KEY_KGSL_SKIP_ZEROING, enabled)
@@ -120,6 +127,8 @@ class PreferenceManager @Inject constructor(
         credentialPrefs()?.getBoolean(KEY_KGSL_SKIP_ZEROING, false)?.let { return it }
         return deviceProtectedPrefs().getBoolean(KEY_KGSL_SKIP_ZEROING, false)
     }
+
+    // ── Avoid Dirty PTE ───────────────────────────────────────────────
 
     fun setAvoidDirtyPte(enabled: Boolean) {
         credentialPrefs()?.edit {
@@ -161,6 +170,8 @@ class PreferenceManager @Inject constructor(
         return deviceProtectedPrefs().getBoolean(KEY_FORCE_FAST_CHARGE, false)
     }
 
+    // ── Battery & Charging ────────────────────────────────────────────
+
     fun setBatteryMonitorEnabled(enabled: Boolean) {
         credentialPrefs()?.edit {
             putBoolean(KEY_BATTERY_MONITOR_ENABLED, enabled)
@@ -175,6 +186,8 @@ class PreferenceManager @Inject constructor(
         if (primary == true) return true
         return deviceProtectedPrefs().getBoolean(KEY_BATTERY_MONITOR_ENABLED, false)
     }
+
+    // ── App Monitor ───────────────────────────────────────────────────
 
     fun setAppMonitorEnabled(enabled: Boolean) {
         credentialPrefs()?.edit {
@@ -311,6 +324,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getInt(KEY_MONITOR_AUTO_RESET_TARGET_LEVEL, 90)
     }
 
+    // ── Notification ──────────────────────────────────────────────────
+
     fun setNotificationIconStyle(style: Int) {
         credentialPrefs()?.edit { putInt(KEY_NOTIFICATION_ICON_STYLE, style) }
         deviceProtectedPrefs().edit { putInt(KEY_NOTIFICATION_ICON_STYLE, style) }
@@ -320,6 +335,8 @@ class PreferenceManager @Inject constructor(
         return credentialPrefs()?.getInt(KEY_NOTIFICATION_ICON_STYLE, ICON_STYLE_APP_LOGO)
             ?: deviceProtectedPrefs().getInt(KEY_NOTIFICATION_ICON_STYLE, ICON_STYLE_APP_LOGO)
     }
+
+    // ── Network & Storage ─────────────────────────────────────────────
 
     fun setTcpCongestionAlgorithm(algorithm: String?) {
         credentialPrefs()?.edit {
@@ -373,6 +390,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getString(KEY_LAST_APPLIED_BOOT_ID, null)
     }
 
+    // ── Background Blocker ────────────────────────────────────────────
+
     fun setBgBlocklist(blocklist: String) {
         credentialPrefs()?.edit { putString(KEY_BG_BLOCKLIST, blocklist) }
         deviceProtectedPrefs().edit { putString(KEY_BG_BLOCKLIST, blocklist) }
@@ -393,7 +412,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getBoolean(KEY_APPLY_BG_BLOCKER_ON_BOOT, false)
     }
 
-    // Set on Boot Methods
+    // ── Boot Apply Flags ─────────────────────────────────────────────
+
     fun setApplyPerformanceModeOnBoot(enabled: Boolean) {
         credentialPrefs()?.edit { putBoolean(KEY_APPLY_PERFORMANCE_MODE_ON_BOOT, enabled) }
         deviceProtectedPrefs().edit { putBoolean(KEY_APPLY_PERFORMANCE_MODE_ON_BOOT, enabled) }
@@ -444,7 +464,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getBoolean(KEY_APPLY_RAM_ON_BOOT, false)
     }
 
-    // GPU
+    // ── GPU Tuning ────────────────────────────────────────────────────
+
     fun setGpuGovernor(governor: String?) {
         credentialPrefs()?.edit {
             if (governor == null) remove(KEY_GPU_GOVERNOR)
@@ -491,7 +512,8 @@ class PreferenceManager @Inject constructor(
         return null
     }
 
-    // RAM
+    // ── RAM / VM Tuning ──────────────────────────────────────────────
+
     fun setZramEnabledPref(enabled: Boolean) {
         credentialPrefs()?.edit { putBoolean(KEY_ZRAM_ENABLED_PREF, enabled) }
         deviceProtectedPrefs().edit { putBoolean(KEY_ZRAM_ENABLED_PREF, enabled) }
@@ -601,7 +623,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getInt(KEY_MIN_FREE_MEMORY, -1)
     }
 
-    // CPU Per-cluster
+    // ── CPU Per-Cluster ──────────────────────────────────────────────
+
     fun setCpuGov(cluster: String, gov: String) {
         credentialPrefs()?.edit { putString(KEY_CPU_GOV_PREFIX + cluster, gov) }
         deviceProtectedPrefs().edit { putString(KEY_CPU_GOV_PREFIX + cluster, gov) }
@@ -649,7 +672,8 @@ class PreferenceManager @Inject constructor(
         return null
     }
 
-    // Performance Mode
+    // ── Performance Mode ─────────────────────────────────────────────
+
     fun setPerformanceMode(mode: String) {
         credentialPrefs()?.edit { putString(KEY_PERFORMANCE_MODE, mode) }
         deviceProtectedPrefs().edit { putString(KEY_PERFORMANCE_MODE, mode) }
@@ -660,7 +684,8 @@ class PreferenceManager @Inject constructor(
             ?: deviceProtectedPrefs().getString(KEY_PERFORMANCE_MODE, "Balanced") ?: "Balanced"
     }
 
-    // FPS Monitor Info
+    // ── FPS Monitor ──────────────────────────────────────────────────
+
     fun setFpsLayerSearchInfoDismissed(dismissed: Boolean) {
         credentialPrefs()?.edit { putBoolean(KEY_FPS_LAYER_SEARCH_INFO_DISMISSED, dismissed) }
         deviceProtectedPrefs().edit { putBoolean(KEY_FPS_LAYER_SEARCH_INFO_DISMISSED, dismissed) }
