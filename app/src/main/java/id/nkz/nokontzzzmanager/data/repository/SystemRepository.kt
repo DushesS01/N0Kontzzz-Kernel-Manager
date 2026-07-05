@@ -53,7 +53,6 @@ import javax.microedition.khronos.opengles.GL10
 // monitoring still live here — tightly coupled via getCachedSystemInfo() and realtimeAggregatedInfoFlow.
 // Extract monitoring sections when a clean boundary emerges.
 
-@Suppress("UNREACHABLE_CODE")
 @Singleton
 class SystemRepository @Inject constructor(
     private val context: Context,
@@ -484,82 +483,6 @@ class SystemRepository @Inject constructor(
     suspend fun setIoScheduler(scheduler: String): Boolean = kernelFeatures.setIoScheduler(scheduler)
     suspend fun getAvailableIoSchedulersList(): List<String> = kernelFeatures.getAvailableIoSchedulersList()
 
-    suspend fun getCpuClusters(): List<CpuCluster> {
-
-        val clusters = mutableListOf<CpuCluster>()
-        val cores = Runtime.getRuntime().availableProcessors()
-
-        // Group cores by their frequency ranges to identify clusters
-        val coreFreqRanges = mutableMapOf<Int, Pair<Int, Int>>() // core -> (min, max)
-        val coreGovernors = mutableMapOf<Int, String>() // core -> governor
-        val coreAvailableGovernors = mutableMapOf<Int, List<String>>() // core -> available governors
-
-        for (coreIndex in 0 until cores) {
-            val minFreqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/cpuinfo_min_freq", "CPU$coreIndex Min Freq")
-            val maxFreqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/cpuinfo_max_freq", "CPU$coreIndex Max Freq")
-            val governor = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_governor", "CPU$coreIndex Governor")
-            val availableGovernorsStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_available_governors", "CPU$coreIndex Available Governors")
-
-            val minFreq = (minFreqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0 // Convert kHz to MHz
-            val maxFreq = (maxFreqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0 // Convert kHz to MHz
-
-            if (minFreq > 0 && maxFreq > 0) {
-                coreFreqRanges[coreIndex] = Pair(minFreq, maxFreq)
-                coreGovernors[coreIndex] = governor ?: "Unknown"
-                coreAvailableGovernors[coreIndex] = availableGovernorsStr?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-            }
-        }
-
-        // Group cores with similar frequency ranges into clusters
-        val frequencyGroups = coreFreqRanges.values.distinct().sortedBy { it.second } // Sort by max frequency
-
-        frequencyGroups.forEachIndexed { index, (minFreq, maxFreq) ->
-            val coresInCluster = coreFreqRanges.filter { it.value == Pair(minFreq, maxFreq) }.keys
-
-            if (coresInCluster.isNotEmpty()) {
-                val representativeCore = coresInCluster.first()
-                val clusterName = when (index) {
-                    0 -> "Little Cluster" // Lowest frequency cluster
-                    frequencyGroups.size - 1 -> "Prime Cluster" // Highest frequency cluster
-                    else -> "Big Cluster"
-                }
-
-                val governor = coreGovernors[representativeCore] ?: "Unknown"
-                val availableGovernors = coreAvailableGovernors[representativeCore] ?: emptyList()
-
-                clusters.add(
-                    CpuCluster(
-                        name = clusterName,
-                        minFreq = minFreq,
-                        maxFreq = maxFreq,
-                        governor = governor,
-                        availableGovernors = availableGovernors
-                    )
-                )
-            }
-        }
-
-        // If no clusters found (fallback), create a single cluster
-        if (clusters.isEmpty()) {
-            val fallbackGovernor = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "CPU0 Governor") ?: "Unknown"
-            val fallbackAvailableGovernors = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors", "CPU0 Available Governors")
-                ?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-
-            clusters.add(
-                CpuCluster(
-                    name = "CPU Cluster",
-                    minFreq = 0,
-                    maxFreq = 0,
-                    governor = fallbackGovernor,
-                    availableGovernors = fallbackAvailableGovernors
-                )
-            )
-        }
-
-        return clusters
-    }
-
-        @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
     val realtimeAggregatedInfoFlow: Flow<RealtimeAggregatedInfo> = callbackFlow {
 
         val lastState = java.util.concurrent.atomic.AtomicReference<RealtimeAggregatedInfo>(null)
