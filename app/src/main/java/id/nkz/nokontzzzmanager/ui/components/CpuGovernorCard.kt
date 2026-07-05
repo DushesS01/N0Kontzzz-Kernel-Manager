@@ -70,6 +70,14 @@ import kotlin.math.abs
 import androidx.compose.ui.res.stringResource
 import id.nkz.nokontzzzmanager.R
 
+private sealed interface CpuDialog {
+    data class Governor(val cluster: String) : CpuDialog
+    data class MinFreq(val cluster: String) : CpuDialog
+    data class MaxFreq(val cluster: String) : CpuDialog
+    data class CoreControl(val cluster: String) : CpuDialog
+    data object None : CpuDialog
+}
+
 @Composable
 fun CpuGovernorCard(
     vm: TuningViewModel,
@@ -80,10 +88,7 @@ fun CpuGovernorCard(
     val availableGovernors by vm.generalAvailableCpuGovernors.collectAsState()
     val coreStates by vm.coreStates.collectAsState()
 
-    var showGovernorDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showMinFreqDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showMaxFreqDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showCoreDialogForCluster by remember { mutableStateOf<String?>(null) }
+    var activeDialog: CpuDialog by remember { mutableStateOf(CpuDialog.None) }
 
     val rotationAngle by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
@@ -217,10 +222,10 @@ fun CpuGovernorCard(
                             CpuClusterCard(
                                 clusterName = clusterName,
                                 vm = vm,
-                                onGovernorClick = { showGovernorDialogForCluster = clusterName },
-                                onMinFrequencyClick = { showMinFreqDialogForCluster = clusterName },
-                                onMaxFrequencyClick = { showMaxFreqDialogForCluster = clusterName },
-                                onCoreClick = { showCoreDialogForCluster = clusterName },
+                                onGovernorClick = { activeDialog = CpuDialog.Governor(clusterName) },
+                                onMinFrequencyClick = { activeDialog = CpuDialog.MinFreq(clusterName) },
+                                onMaxFrequencyClick = { activeDialog = CpuDialog.MaxFreq(clusterName) },
+                                onCoreClick = { activeDialog = CpuDialog.CoreControl(clusterName) },
                                 shape = clusterCardShape
                             )
                         }
@@ -230,62 +235,60 @@ fun CpuGovernorCard(
         }
     }
 
-    if (showGovernorDialogForCluster != null) {
-        GovernorSelectionDialog(
-            clusterName = showGovernorDialogForCluster!!,
+    when (val dialog = activeDialog) {
+        is CpuDialog.Governor -> GovernorSelectionDialog(
+            clusterName = dialog.cluster,
             availableGovernors = availableGovernors,
-            currentSelectedGovernor = vm.getCpuGov(showGovernorDialogForCluster!!).collectAsState().value,
+            currentSelectedGovernor = vm.getCpuGov(dialog.cluster).collectAsState().value,
             onGovernorSelected = { selectedGov ->
-                vm.setCpuGov(showGovernorDialogForCluster!!, selectedGov)
-                showGovernorDialogForCluster = null
+                vm.setCpuGov(dialog.cluster, selectedGov)
+                activeDialog = CpuDialog.None
             },
-            onDismiss = { showGovernorDialogForCluster = null }
+            onDismiss = { activeDialog = CpuDialog.None }
         )
-    }
 
-    if (showMinFreqDialogForCluster != null) {
-        val currentFreqPair by vm.getCpuFreq(showMinFreqDialogForCluster!!).collectAsState()
-        val availableFrequencies by vm.getAvailableCpuFrequencies(showMinFreqDialogForCluster!!).collectAsState()
+        is CpuDialog.MinFreq -> {
+            val currentFreqPair by vm.getCpuFreq(dialog.cluster).collectAsState()
+            val availableFrequencies by vm.getAvailableCpuFrequencies(dialog.cluster).collectAsState()
 
-        MinFrequencySelectionDialog(
-            clusterName = showMinFreqDialogForCluster!!,
-            currentMinFreq = currentFreqPair.first,
-            allAvailableFrequencies = availableFrequencies,
-            onMinFrequencySelected = { minFreq ->
-                val currentMaxFreq = currentFreqPair.second
-                vm.setCpuFreq(showMinFreqDialogForCluster!!, minFreq, currentMaxFreq)
-                showMinFreqDialogForCluster = null
-            },
-            onDismiss = { showMinFreqDialogForCluster = null }
-        )
-    }
+            MinFrequencySelectionDialog(
+                clusterName = dialog.cluster,
+                currentMinFreq = currentFreqPair.first,
+                allAvailableFrequencies = availableFrequencies,
+                onMinFrequencySelected = { minFreq ->
+                    val currentMaxFreq = currentFreqPair.second
+                    vm.setCpuFreq(dialog.cluster, minFreq, currentMaxFreq)
+                    activeDialog = CpuDialog.None
+                },
+                onDismiss = { activeDialog = CpuDialog.None }
+            )
+        }
 
-    if (showMaxFreqDialogForCluster != null) {
-        val currentFreqPair by vm.getCpuFreq(showMaxFreqDialogForCluster!!).collectAsState()
-        val availableFrequencies by vm.getAvailableCpuFrequencies(showMaxFreqDialogForCluster!!).collectAsState()
+        is CpuDialog.MaxFreq -> {
+            val currentFreqPair by vm.getCpuFreq(dialog.cluster).collectAsState()
+            val availableFrequencies by vm.getAvailableCpuFrequencies(dialog.cluster).collectAsState()
 
-        MaxFrequencySelectionDialog(
-            clusterName = showMaxFreqDialogForCluster!!,
-            currentMaxFreq = currentFreqPair.second,
-            allAvailableFrequencies = availableFrequencies,
-            onMaxFrequencySelected = { maxFreq ->
-                val currentMinFreq = currentFreqPair.first
-                vm.setCpuFreq(showMaxFreqDialogForCluster!!, currentMinFreq, maxFreq)
-                showMaxFreqDialogForCluster = null
-            },
-            onDismiss = { showMaxFreqDialogForCluster = null }
-        )
-    }
+            MaxFrequencySelectionDialog(
+                clusterName = dialog.cluster,
+                currentMaxFreq = currentFreqPair.second,
+                allAvailableFrequencies = availableFrequencies,
+                onMaxFrequencySelected = { maxFreq ->
+                    val currentMinFreq = currentFreqPair.first
+                    vm.setCpuFreq(dialog.cluster, currentMinFreq, maxFreq)
+                    activeDialog = CpuDialog.None
+                },
+                onDismiss = { activeDialog = CpuDialog.None }
+            )
+        }
 
-    if (showCoreDialogForCluster != null) {
-        CoreStatusDialog(
-            clusterName = showCoreDialogForCluster!!,
+        is CpuDialog.CoreControl -> CoreStatusDialog(
+            clusterName = dialog.cluster,
             coreStates = coreStates,
-            onCoreToggled = { coreId ->
-                vm.toggleCore(coreId)
-            },
-            onDismiss = { showCoreDialogForCluster = null }
+            onCoreToggled = { coreId -> vm.toggleCore(coreId) },
+            onDismiss = { activeDialog = CpuDialog.None }
         )
+
+        is CpuDialog.None -> { /* no dialog shown */ }
     }
 }
 

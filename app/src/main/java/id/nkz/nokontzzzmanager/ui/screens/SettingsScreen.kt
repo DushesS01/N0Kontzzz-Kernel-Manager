@@ -30,7 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
-import id.nkz.nokontzzzmanager.ui.viewmodel.SettingsViewModel
+import id.nkz.nokontzzzmanager.viewmodel.BackupRestoreViewModel
 import id.nkz.nokontzzzmanager.ui.theme.ThemeMode
 import id.nkz.nokontzzzmanager.R
 import id.nkz.nokontzzzmanager.utils.LocaleHelper
@@ -66,7 +66,7 @@ private data class PendingBackupOptions(
 @Composable
 fun SettingsScreen(
     navController: NavController,
-    viewModel: SettingsViewModel = hiltViewModel(),
+    viewModel: BackupRestoreViewModel = hiltViewModel(),
 ) {
     
     var showThemeDialog by remember { mutableStateOf(false) }
