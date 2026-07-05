@@ -9,6 +9,9 @@ import dagger.hilt.components.SingletonComponent
 import id.nkz.nokontzzzmanager.data.repository.RootRepository
 import id.nkz.nokontzzzmanager.data.repository.SysfsHelper
 import id.nkz.nokontzzzmanager.data.repository.KernelFeatureRepository
+import id.nkz.nokontzzzmanager.data.repository.CpuMonitorProvider
+import id.nkz.nokontzzzmanager.data.repository.BatteryMonitorProvider
+import id.nkz.nokontzzzmanager.data.repository.MemoryMonitorProvider
 import id.nkz.nokontzzzmanager.data.repository.SystemRepository
 import id.nkz.nokontzzzmanager.data.repository.TuningRepository
 import javax.inject.Singleton
@@ -59,8 +62,11 @@ object AppModule {
         rootRepository: RootRepository,
         sysfsHelper: SysfsHelper,
         kernelFeatures: KernelFeatureRepository,
+        cpuMonitor: CpuMonitorProvider,
+        batteryMonitor: BatteryMonitorProvider,
+        memoryMonitor: MemoryMonitorProvider,
     ): SystemRepository =
-        SystemRepository(context, tuningRepository, rootRepository, sysfsHelper, kernelFeatures)
+        SystemRepository(context, tuningRepository, rootRepository, sysfsHelper, kernelFeatures, cpuMonitor, batteryMonitor, memoryMonitor)
 
     @Provides
     @Singleton

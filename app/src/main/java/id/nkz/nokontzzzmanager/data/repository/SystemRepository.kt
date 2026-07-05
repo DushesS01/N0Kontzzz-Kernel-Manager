@@ -61,6 +61,9 @@ class SystemRepository @Inject constructor(
     private val rootRepository: RootRepository,
     private val sysfsHelper: SysfsHelper,
     private val kernelFeatures: KernelFeatureRepository,
+    private val cpuMonitor: CpuMonitorProvider,
+    private val batteryMonitor: BatteryMonitorProvider,
+    private val memoryMonitor: MemoryMonitorProvider,
 ) {
 
     companion object {
@@ -94,404 +97,19 @@ class SystemRepository @Inject constructor(
         return sysfsHelper.writeStringToFile(filePath, content, fileDescription, attemptSu)
     }
 
-    // Variabel untuk menyimpan data CPU sebelumnya untuk perhitungan load
-    private var previousCpuData: List<LongArray>? = null
+    // CPU realtime — delegated to CpuMonitorProvider
 
-    private suspend fun getCpuRealtimeInternal(): RealtimeCpuInfo {
-        val cores = Runtime.getRuntime().availableProcessors()
-        val governor = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "CPU0 Governor") ?: VALUE_UNKNOWN
+    fun getCpuRealtime(): RealtimeCpuInfo = cpuMonitor.getCpuRealtime()
 
-        val frequencies = List(cores) { coreIndex ->
-            val onlineStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/online", "CPU$coreIndex Online Status", attemptSu = false)
-            val isOnline = onlineStr == null || onlineStr.trim() != "0"
+    suspend fun getCpuClusters(): List<CpuCluster> = cpuMonitor.getCpuClusters()
 
-            if (isOnline) {
-                val freqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_cur_freq", "CPU$coreIndex Current Freq")
-                (freqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0
-            } else {
-                0
-            }
-        }
+    // Battery + Deep Sleep — delegated to BatteryMonitorProvider
+    fun getBatteryInfo(): BatteryInfo = batteryMonitor.getBatteryInfo()
+    fun getDeepSleepInfo(): DeepSleepInfo = batteryMonitor.getDeepSleepInfo()
+    fun getAwakeTime(): Long = batteryMonitor.getAwakeTime()
 
-        val tempStr = readFileToString("/sys/class/thermal/thermal_zone0/temp", "Thermal Zone0 Temp")
-        val temperature = (tempStr?.toFloatOrNull()?.div(1000)) ?: 0f // Asumsi temp dalam mili-Celsius
-
-        // Menghitung CPU load percentage
-        val cpuLoadPercentage = calculateCpuLoadPercentage()
-
-        val systemInfo = getCachedSystemInfo() // Dapatkan info SoC
-
-        return RealtimeCpuInfo(
-            cores = cores,
-            governor = governor,
-            freqs = frequencies,
-            temp = temperature,
-            soc = systemInfo.soc, // Menambahkan kembali socModel
-            cpuLoadPercentage = cpuLoadPercentage
-        )
-    }
-
-    private suspend fun calculateCpuLoadPercentage(): Float? {
-        try {
-            // Membaca data CPU dari /proc/stat
-            val cpuStat = readFileToString("/proc/stat", "CPU Stat")?.lines()?.firstOrNull { it.startsWith("cpu ") }
-            if (cpuStat == null) {
-                return null
-            }
-
-            // Parsing data CPU
-            val cpuData = cpuStat.trim().split("\\s+".toRegex()).drop(1).map { it.toLong() }.toLongArray()
-            if (cpuData.size < 4) {
-                return null
-            }
-
-            // Jika ini adalah pembacaan pertama, simpan data dan kembalikan null
-            val previousData = previousCpuData
-            if (previousData == null) {
-                previousCpuData = listOf(cpuData)
-                return null
-            }
-
-            // Menghitung perbedaan antara data saat ini dan sebelumnya
-            val prevData = previousData.first()
-            val diffData = LongArray(cpuData.size) { i -> cpuData[i] - prevData[i] }
-
-            // Menghitung total waktu dan waktu idle
-            val total = diffData.sum()
-            val idle = diffData[3] + (if (diffData.size > 4) diffData[4] else 0) // idle + iowait
-
-            // Menghitung persentase penggunaan CPU
-            val usage = if (total > 0) ((total - idle).toDouble() / total.toDouble() * 100.0) else 0.0
-            
-            // Simpan data saat ini untuk perhitungan berikutnya
-            previousCpuData = listOf(cpuData)
-
-            return usage.toFloat().coerceIn(0f, 100f)
-        } catch (_: Exception) {
-            return null
-        }
-    }
-
-    fun getCpuRealtime(): RealtimeCpuInfo {
-        return runBlocking { getCpuRealtimeInternal() }
-    }
-
-    private fun getBatteryLevelFromApi(): Int {
-        val intentFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val batteryStatusIntent =
-            context.applicationContext.registerReceiver(null, intentFilter) ?: return -1
-        val level = batteryStatusIntent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-        val scale = batteryStatusIntent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-        return if (level != -1 && scale != -1 && scale != 0) {
-            (level / scale.toFloat() * 100).toInt()
-        } else -1
-    }
-
-    private suspend fun getBatteryInfoInternal(statusFromIntent: Int = -1): BatteryInfo {
-        val batteryDir = "/sys/class/power_supply/battery"
-        val batteryLevelStr = readFileToString("$batteryDir/capacity", "Battery Level Percent from File")
-        val finalLevel = batteryLevelStr?.toIntOrNull() ?: getBatteryLevelFromApi().let { if (it == -1) 0 else it }
-
-        var tempStr = readFileToString("$batteryDir/temp", "Battery Temperature")
-        var tempSource = "$batteryDir/temp"
-        if (tempStr == null) {
-            val thermalZoneDirs = File("/sys/class/thermal/").listFiles { dir, name ->
-                dir.isDirectory && name.startsWith("thermal_zone")
-            }
-            thermalZoneDirs?.sortedBy { it.name }?.forEach thermalLoop@{ zoneDir ->
-                val type = readFileToString("${zoneDir.path}/type", "Thermal Zone Type (${zoneDir.name})", attemptSu = false)
-                if (type != null && (type.contains("battery", ignoreCase = true) || type.contains("แบตเตอรี่") || type.contains("case_therm", ignoreCase = true) || type.contains("ibat_therm", ignoreCase = true))) {
-                    tempStr = readFileToString("${zoneDir.path}/temp", "Battery Temperature from ${zoneDir.name} ($type)")
-                    if (tempStr != null) {
-                        tempSource = "${zoneDir.path}/temp (type: $type)"
-                        return@thermalLoop
-                    }
-                }
-            }
-        }
-        val finalTemperature = tempStr?.toFloatOrNull()?.let { rawTemp ->
-            // Jika dari thermal_zone, biasanya dalam mili-Celsius, jika dari power_supply, bisa deci-Celsius
-            if (rawTemp > 1000 && (tempSource.contains("thermal_zone") || tempSource.contains("temp_input"))) rawTemp / 1000 else rawTemp / 10
-        } ?: 0f
-
-        val cycleCountStr = readFileToString("$batteryDir/cycle_count", "Battery Cycle Count")
-        val finalCycleCount = cycleCountStr?.toIntOrNull() ?: run {
-            // Try alternative paths for cycle count
-            val altCyclePaths = listOf(
-                "/sys/class/power_supply/bms/cycle_count",
-                "/sys/class/power_supply/battery/cycle_count_summary",
-                "/proc/driver/battery_cycle",
-                "/proc/battinfo"
-            )
-
-            for (altPath in altCyclePaths) {
-                val altCycleStr = readFileToString(altPath, "Alternative Battery Cycle Count ($altPath)")
-                val cycles = altCycleStr?.toIntOrNull()
-                if (cycles != null && cycles > 0) {
-                    return@run cycles
-                }
-            }
-            0 // Default if no cycle count found
-        }
-
-        // Try multiple paths for battery capacity information
-        val designCapacityUahStr = readFileToString("$batteryDir/charge_full_design", "Battery Design Capacity (uAh)")
-        val designCapacityUah = designCapacityUahStr?.toLongOrNull() ?: run {
-            // Try alternative paths for design capacity
-            val altCapacityPaths = listOf(
-                "/sys/class/power_supply/bms/charge_full_design",
-                "/sys/class/power_supply/battery/energy_full_design",
-                "/proc/driver/battery_capacity"
-            )
-
-            for (altPath in altCapacityPaths) {
-                val altCapStr = readFileToString(altPath, "Alternative Battery Design Capacity ($altPath)")
-                val cap = altCapStr?.toLongOrNull()
-                if (cap != null && cap > 0) {
-                    return@run cap
-                }
-            }
-            null
-        }
-
-        val finalDesignCapacityMah = if (designCapacityUah != null && designCapacityUah > 0) {
-            // Convert microAh to mAh, handle different units
-            when {
-                designCapacityUah > 10000000 -> (designCapacityUah / 1000).toInt() // µAh to mAh
-                designCapacityUah > 10000 -> (designCapacityUah / 1000).toInt() // µAh to mAh
-                else -> designCapacityUah.toInt() // Already in mAh
-            }
-        } else 0
-
-        var calculatedSohPercentage = 0
-        var currentCapacityMah = 0
-
-        if (finalDesignCapacityMah > 0 && designCapacityUah != null) {
-            val currentFullUahStr = readFileToString("$batteryDir/charge_full", "Battery Current Full Capacity (uAh)")
-            val currentFullUah = currentFullUahStr?.toLongOrNull() ?: run {
-                // Try alternative paths for current capacity
-                val altCurrentCapPaths = listOf(
-                    "/sys/class/power_supply/bms/charge_full",
-                    "/sys/class/power_supply/battery/energy_full",
-                    "/proc/driver/battery_current_capacity"
-                )
-
-                for (altPath in altCurrentCapPaths) {
-                    val altCapStr = readFileToString(altPath, "Alternative Battery Current Capacity ($altPath)")
-                    val cap = altCapStr?.toLongOrNull()
-                    if (cap != null && cap > 0) {
-                        return@run cap
-                    }
-                }
-                null
-            }
-
-            if (currentFullUah != null && currentFullUah > 0) {
-                // Convert microAh to mAh, handle different units
-                currentCapacityMah = when {
-                    currentFullUah > 10000000 -> (currentFullUah / 1000).toInt() // µAh to mAh
-                    currentFullUah > 10000 -> (currentFullUah / 1000).toInt() // µAh to mAh
-                    else -> currentFullUah.toInt() // Already in mAh
-                }
-
-                // Calculate real battery health percentage: (Current Capacity / Design Capacity) × 100%
-                val sohDouble = (currentCapacityMah.toDouble() / finalDesignCapacityMah.toDouble()) * 100.0
-                calculatedSohPercentage = sohDouble.toInt().coerceIn(0, 100)
-
-            } else {
-                // If we can't read current capacity, try to get health directly from system
-                val healthPercentageStr = readFileToString("$batteryDir/health", "Direct Battery Health")
-                calculatedSohPercentage = healthPercentageStr?.toIntOrNull()?.coerceIn(0, 100) ?: run {
-                    // As last resort, try to estimate from BatteryManager health status
-                    val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                    val health = batteryIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN) ?: BatteryManager.BATTERY_HEALTH_UNKNOWN
-
-                    when (health) {
-                        BatteryManager.BATTERY_HEALTH_GOOD -> 100
-                        BatteryManager.BATTERY_HEALTH_OVERHEAT -> 85
-                        BatteryManager.BATTERY_HEALTH_COLD -> 90
-                        BatteryManager.BATTERY_HEALTH_DEAD -> 0
-                        BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> 75
-                        BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> 50
-                        else -> 100 // Default to 100% for unknown
-                    }
-                }
-                currentCapacityMah = (finalDesignCapacityMah * calculatedSohPercentage / 100.0).toInt()
-            }
-        } else {
-            // If no design capacity is available, try to get approximate values
-
-            // Try to get some capacity info from BatteryManager properties
-            val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-            val energyCounter = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
-
-            if (energyCounter != Int.MIN_VALUE && energyCounter > 0) {
-                // Energy counter is in nWh, convert to approximate mAh
-                // Assuming average voltage of 3.7V: mAh ≈ nWh / (3.7 * 1000000)
-                val estimatedCapacityMah = (energyCounter / (3.7 * 1000000)).toInt()
-                if (estimatedCapacityMah > 0) {
-                    currentCapacityMah = estimatedCapacityMah
-                    // Assume this is 100% health since we don't have design capacity
-                    calculatedSohPercentage = 100
-                }
-            }
-        }
-
-        // Determine health status string based on percentage
-        val healthStatus = when {
-            calculatedSohPercentage >= 90 -> "Excellent"
-            calculatedSohPercentage >= 80 -> "Good"
-            calculatedSohPercentage >= 70 -> "Fair"
-            calculatedSohPercentage >= 60 -> "Poor"
-            calculatedSohPercentage > 0 -> "Critical"
-            else -> "Unknown"
-        }
-
-        val voltagePaths = listOf(
-            "$batteryDir/voltage_now",
-            "$batteryDir/batt_vol",
-            "$batteryDir/batt_voltage",
-            "$batteryDir/battery_voltage",
-            "/sys/class/power_supply/battery/voltage_now",
-            "/sys/class/power_supply/bms/voltage_now",
-            "/sys/class/power_supply/main/voltage_now",
-            "/sys/class/power_supply/pm8921-bms/voltage_now"
-        )
-        var finalVoltage: Float? = null
-        for (path in voltagePaths) {
-            val voltageStr = readFileToString(path, "Battery Voltage from $path")
-            if (voltageStr.isNullOrBlank()) continue
-
-            val cleanedVoltage = buildString {
-                for (ch in voltageStr) {
-                    if (ch.isDigit() || ch == '.' || ch == '-') append(ch)
-                }
-            }
-
-            val voltageValue = cleanedVoltage.toFloatOrNull()
-            if (voltageValue != null && voltageValue > 0f) {
-                finalVoltage = voltageValue
-                break
-            }
-        }
-
-        var finalCurrent: Float? = null
-        val currentPaths = listOf(
-            "$batteryDir/current_now",
-            "$batteryDir/current_avg",
-            "/sys/class/power_supply/bms/current_now",
-            "/sys/class/power_supply/usb/current_now"
-        )
-        for (path in currentPaths) {
-            val currentStr = readFileToString(path, "Battery Current from $path")
-            if (currentStr != null) {
-                finalCurrent = currentStr.toFloatOrNull()
-                // Some kernels add extra characters, so let's be safe
-                if (finalCurrent != null) {
-                    break // Found a valid value, stop searching
-                }
-            }
-        }
-
-        // Prefer derived wattage from voltage/current; avoid rooting for power_now as banyak device tidak menyediakan
-        val finalWattage = if (finalVoltage != null && finalCurrent != null) {
-            // voltage_now commonly µV, current in µA; normalisasi ke W
-            val v = if (finalVoltage > 10_000) finalVoltage / 1_000_000f else finalVoltage / 1_000_000f
-            val i = finalCurrent / 1_000_000f
-            (kotlin.math.abs(v * i))
-        } else {
-            val finalWattageStr = readFileToString("$batteryDir/power_now", "Battery Power Now", attemptSu = false)
-            finalWattageStr?.toFloatOrNull()
-        }
-
-        val finalTechnology = readFileToString("$batteryDir/technology", "Battery Technology")
-
-        val statusString = readFileToString("$batteryDir/status", "Battery Status")
-
-        // Determine charging status
-        val isCharging = when {
-            // Prioritize the status from the broadcast intent if it's valid and not unknown
-            statusFromIntent != -1 && statusFromIntent != BatteryManager.BATTERY_STATUS_UNKNOWN -> {
-                statusFromIntent == BatteryManager.BATTERY_STATUS_CHARGING || statusFromIntent == BatteryManager.BATTERY_STATUS_FULL
-            }
-            // Then fall back to the file-based logic
-            finalCurrent != null -> {
-                finalCurrent < -1000f // Negative current means charging
-            }
-            else -> {
-                statusString?.contains("Charging", ignoreCase = true) == true ||
-                statusString?.contains("Full", ignoreCase = true) == true
-            }
-        }
-
-        val finalStatus = when {
-            statusString.isNullOrBlank() -> ""
-            statusString.contains("Charging", ignoreCase = true) -> "Charging"
-            statusString.contains("Discharging", ignoreCase = true) -> "Discharging"
-            statusString.contains("Full", ignoreCase = true) -> "Full"
-            else -> statusString
-        }
-
-        // Normalize current for display: positive for charging, negative for discharging
-        val displayCurrent = finalCurrent?.let {
-            val absCurrent = kotlin.math.abs(it)
-            if (isCharging) absCurrent else -absCurrent
-        } ?: 0f
-
-        return BatteryInfo(
-            level = finalLevel,
-            temp = finalTemperature,
-            voltage = finalVoltage ?: 0f,
-            isCharging = isCharging,
-            current = displayCurrent,
-            chargingWattage = finalWattage ?: 0f,
-            technology = finalTechnology ?: "Unknown",
-            health = healthStatus, // Use the calculated health status
-            status = finalStatus,
-            chargingType = getChargingTypeFromStatus(statusString),
-            powerSource = getChargingTypeFromStatus(statusString),
-            healthPercentage = calculatedSohPercentage,
-            cycleCount = finalCycleCount, // Use the actual cycle count
-            capacity = finalDesignCapacityMah, // Use the actual design capacity
-            currentCapacity = currentCapacityMah, // Use the actual current capacity
-            plugged = 0,
-            isBypassActive = getBypassCharging()
-        )
-    }
-
-    fun getBatteryInfo(): BatteryInfo {
-        return runBlocking { getBatteryInfoInternal() }
-    }
-
-    private suspend fun getMemoryInfoInternal(): MemoryInfo {
-        return try {
-            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            val memoryInfo = android.app.ActivityManager.MemoryInfo()
-            activityManager.getMemoryInfo(memoryInfo)
-
-            // Fetch ZRAM and Swap details from TuningRepository
-            val zramTotal = tuningRepository.getZramDisksize().firstOrNull() ?: 0L
-            val zramUsed = tuningRepository.getZramUsed().firstOrNull() ?: 0L
-            val swapTotal = tuningRepository.getSwapTotal().firstOrNull() ?: 0L
-            val swapUsed = tuningRepository.getSwapUsed().firstOrNull() ?: 0L
-
-            MemoryInfo(
-                used = memoryInfo.totalMem - memoryInfo.availMem,
-                total = memoryInfo.totalMem,
-                free = memoryInfo.availMem,
-                zramTotal = zramTotal,
-                zramUsed = zramUsed,
-                swapTotal = swapTotal,
-                swapUsed = swapUsed
-            )
-        } catch (e: Exception) {
-            MemoryInfo(0, 0, 0)
-        }
-    }
-
-    fun getMemoryInfo(): MemoryInfo {
-        return runBlocking { getMemoryInfoInternal() }
-    }
+    // Memory — delegated to MemoryMonitorProvider
+    fun getMemoryInfo(): MemoryInfo = memoryMonitor.getMemoryInfo()
 
     private suspend fun getGpuModel(): String {
         return try {
@@ -662,39 +280,6 @@ class SystemRepository @Inject constructor(
         return runBlocking { getGpuRealtimeInternal() }
     }
 
-    private fun getUptimeMillisInternal(): Long {
-        return android.os.SystemClock.elapsedRealtime()
-    }
-
-    private fun getDeepSleepMillisInternal(): Long {
-        val uptime = android.os.SystemClock.elapsedRealtime()
-        val awakeTime = android.os.SystemClock.uptimeMillis()
-        return uptime - awakeTime
-    }
-
-    @SuppressLint("DefaultLocale")
-    private fun formatDuration(millis: Long): String {
-        val totalSeconds = millis / 1000
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-        return if (hours > 0) {
-            String.format("%02d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%02d:%02d", minutes, seconds)
-        }
-    }
-    fun getDeepSleepInfo(): DeepSleepInfo {
-        return DeepSleepInfo(getUptimeMillisInternal(), getDeepSleepMillisInternal())
-    }
-    
-    // Helper function to get awake time (approximation of screen on time)
-    fun getAwakeTime(): Long {
-        // uptimeMillis returns the time since boot that the CPU has been awake (not in deep sleep)
-        // This includes screen on time and other awake periods
-        return android.os.SystemClock.uptimeMillis()
-    }
-
     private fun getSystemInfoInternal(): SystemInfo {
 
         // Improved SoC detection with multiple property sources
@@ -848,16 +433,6 @@ class SystemRepository @Inject constructor(
     }
 
 
-
-    private fun getChargingTypeFromStatus(statusString: String?): String {
-        return when {
-            statusString.isNullOrBlank() -> "Unknown"
-            statusString.contains("Charging", ignoreCase = true) -> "Charging"
-            statusString.contains("Full", ignoreCase = true) -> "Not Charging"
-            statusString.contains("Discharging", ignoreCase = true) -> "Not Charging"
-            else -> "Unknown"
-        }
-    }
 
     fun getSystemInfo(): SystemInfo {
         return runBlocking { getCachedSystemInfo() }
@@ -1294,12 +869,12 @@ class SystemRepository @Inject constructor(
         // Initial full data fetch
         launch(Dispatchers.IO) {
             val initialData = RealtimeAggregatedInfo(
-                cpuInfo = getCpuRealtimeInternal(),
+                cpuInfo = cpuMonitor.getCpuRealtimeSuspend(),
                 gpuInfo = getGpuRealtimeInternal(),
-                batteryInfo = getBatteryInfoInternal(),
-                memoryInfo = getMemoryInfoInternal(),
-                uptimeMillis = getUptimeMillisInternal(),
-                deepSleepMillis = getDeepSleepMillisInternal()
+                batteryInfo = batteryMonitor.getBatteryInfoSuspend(),
+                memoryInfo = memoryMonitor.getMemoryInfoSuspend(),
+                uptimeMillis = batteryMonitor.getUptimeMillis(),
+                deepSleepMillis = batteryMonitor.getDeepSleepMillis()
             )
             lastState.set(initialData)
             trySend(initialData)
@@ -1313,7 +888,7 @@ class SystemRepository @Inject constructor(
                     val currentState = lastState.get()
                     if (currentState != null) {
                         launch(Dispatchers.IO) {
-                            val newBatteryInfo = getBatteryInfoInternal(status)
+                            val newBatteryInfo = batteryMonitor.getBatteryInfoSuspend(status)
                             val newState = currentState.copy(batteryInfo = newBatteryInfo)
                             lastState.set(newState)
                             trySend(newState)
@@ -1331,11 +906,11 @@ class SystemRepository @Inject constructor(
                 val currentState = lastState.get()
                 if (currentState != null) {
                     // Fetch non-battery stats
-                    val newCpuInfo = getCpuRealtimeInternal()
+                    val newCpuInfo = cpuMonitor.getCpuRealtimeSuspend()
                     val newGpuInfo = getGpuRealtimeInternal()
-                    val newMemoryInfo = getMemoryInfoInternal()
-                    val newUptime = getUptimeMillisInternal()
-                    val newDeepSleep = getDeepSleepMillisInternal()
+                    val newMemoryInfo = memoryMonitor.getMemoryInfoSuspend()
+                    val newUptime = batteryMonitor.getUptimeMillis()
+                    val newDeepSleep = batteryMonitor.getDeepSleepMillis()
 
                     // Create new state by copying the last one and updating polled values
                     val newState = currentState.copy(
