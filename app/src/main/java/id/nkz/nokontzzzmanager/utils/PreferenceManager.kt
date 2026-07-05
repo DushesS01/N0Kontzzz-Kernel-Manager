@@ -58,6 +58,7 @@ class PreferenceManager @Inject constructor(
         private const val KEY_APPLY_CPU_ON_BOOT = "apply_cpu_on_boot"
         private const val KEY_APPLY_GPU_ON_BOOT = "apply_gpu_on_boot"
         private const val KEY_APPLY_THERMAL_ON_BOOT = "apply_thermal_on_boot"
+        private const val KEY_LAST_APPLIED_THERMAL_INDEX = "last_applied_thermal_index"
         private const val KEY_APPLY_RAM_ON_BOOT = "apply_ram_on_boot"
 
         // ── GPU Tuning ─────────────────────────────────────────────────
@@ -452,6 +453,16 @@ class PreferenceManager @Inject constructor(
     fun isApplyThermalOnBoot(): Boolean {
         return credentialPrefs()?.getBoolean(KEY_APPLY_THERMAL_ON_BOOT, false)
             ?: deviceProtectedPrefs().getBoolean(KEY_APPLY_THERMAL_ON_BOOT, false)
+    }
+
+    fun setLastAppliedThermalIndex(index: Int) {
+        credentialPrefs()?.edit { putInt(KEY_LAST_APPLIED_THERMAL_INDEX, index) }
+        deviceProtectedPrefs().edit { putInt(KEY_LAST_APPLIED_THERMAL_INDEX, index) }
+    }
+
+    fun getLastAppliedThermalIndex(default: Int = -1): Int {
+        return credentialPrefs()?.getInt(KEY_LAST_APPLIED_THERMAL_INDEX, default)
+            ?: deviceProtectedPrefs().getInt(KEY_LAST_APPLIED_THERMAL_INDEX, default)
     }
 
     fun setApplyRamOnBoot(enabled: Boolean) {

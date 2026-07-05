@@ -1,9 +1,7 @@
 package id.nkz.nokontzzzmanager.viewmodel
 
 import android.app.Application
-import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -32,12 +30,7 @@ class TuningViewModel @Inject constructor(
     private val preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
-    private val thermalPrefs: SharedPreferences by lazy {
-        application.getSharedPreferences("thermal_settings_prefs", Context.MODE_PRIVATE)
-    }
-    // performancePrefs removed
-    private val KEY_LAST_APPLIED_THERMAL_INDEX = "last_applied_thermal_index"
-    // KEY_LAST_APPLIED_PERFORMANCE_MODE removed
+    // performancePrefs, KEY_LAST_APPLIED_PERFORMANCE_MODE removed; thermal index via PreferenceManager
 
     val cpuClusters = listOf("cpu0", "cpu4", "cpu7")
 
@@ -508,7 +501,7 @@ class TuningViewModel @Inject constructor(
             // Check if "Set on Boot" is enabled for Thermal
             if (preferenceManager.isApplyThermalOnBoot()) {
                 // Prioritize restoring the user's last saved setting.
-                val lastSavedIndex = thermalPrefs.getInt(KEY_LAST_APPLIED_THERMAL_INDEX, -2) // Use -2 to indicate no value saved
+                val lastSavedIndex = preferenceManager.getLastAppliedThermalIndex(-2) // Use -2 to indicate no value saved
 
                 if (lastSavedIndex != -2) {
                     // A profile was previously saved by the user. Restore it.
@@ -932,7 +925,7 @@ class TuningViewModel @Inject constructor(
 
     private suspend fun applyLastSavedThermalProfile() {
         try {
-            val idx = thermalPrefs.getInt(KEY_LAST_APPLIED_THERMAL_INDEX, -1)
+            val idx = preferenceManager.getLastAppliedThermalIndex(-1)
             val profile = thermalRepo.availableThermalProfiles.find { it.index == idx }
             if (profile != null && _currentThermalModeIndex.value != idx) {
                 setThermalProfileInternal(profile, isRestoring = true)
@@ -946,7 +939,7 @@ class TuningViewModel @Inject constructor(
         thermalRepo.setThermalModeIndex(profile.index).collect { ok ->
             if (ok) {
                 _currentThermalModeIndex.value = profile.index
-                if (!isRestoring) thermalPrefs.edit { putInt(KEY_LAST_APPLIED_THERMAL_INDEX, profile.index) }
+                if (!isRestoring) preferenceManager.setLastAppliedThermalIndex(profile.index)
                 // For Dynamic mode (10), we need continuous monitoring
                 // For other modes, persistent scripts handle reboot persistence
                 if (profile.index == 10) {
