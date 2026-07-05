@@ -350,3 +350,26 @@ private fun ControlSection(
         }
     }
 }
+
+@Composable
+fun CpuGovernorCard(
+    vm: TuningViewModel,
+    isExpanded: Boolean,
+    onExpandChange: (Boolean) -> Unit
+) {
+    val clusters by vm.dynamicCpuClusters.collectAsState()
+    val shape = RoundedCornerShape(8.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        clusters.forEach { cluster ->
+            CpuClusterCard(
+                clusterName = cluster,
+                vm = vm,
+                onGovernorClick = {},
+                onMinFrequencyClick = {},
+                onMaxFrequencyClick = {},
+                onCoreClick = {},
+                shape = shape
+            )
+        }
+    }
+}

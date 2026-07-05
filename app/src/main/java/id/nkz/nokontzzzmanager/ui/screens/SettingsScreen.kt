@@ -106,7 +106,7 @@ fun SettingsScreen(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null && pendingOptions != null) {
-            val ops = pendingOptions
+            val ops = pendingOptions!!
             viewModel.backupSettings(uri, ops.tuning, ops.network, ops.battery, ops.other, ops.customTunables, ops.appProfiles, ops.games)
         }
         pendingOptions = null

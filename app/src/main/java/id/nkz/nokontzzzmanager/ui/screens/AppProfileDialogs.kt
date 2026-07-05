@@ -1,5 +1,6 @@
 package id.nkz.nokontzzzmanager.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,20 +19,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import id.nkz.nokontzzzmanager.R
 import id.nkz.nokontzzzmanager.data.database.AppProfileEntity
-import id.nkz.nokontzzzmanager.ui.dialog.CpuTuningDialog
 import id.nkz.nokontzzzmanager.data.model.CpuProfileConfig
-import id.nkz.nokontzzzmanager.ui.dialog.GpuTuningDialog
 import id.nkz.nokontzzzmanager.data.model.GpuProfileConfig
+import id.nkz.nokontzzzmanager.ui.dialog.CpuTuningDialog
+import id.nkz.nokontzzzmanager.ui.dialog.GpuTuningDialog
+import id.nkz.nokontzzzmanager.ui.components.IndeterminateExpressiveLoadingIndicator
 import id.nkz.nokontzzzmanager.viewmodel.AppInfo
+import id.nkz.nokontzzzmanager.viewmodel.AppProfilesViewModel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun AppPickerSheet(
@@ -158,12 +166,13 @@ fun AppPickerSheet(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(app.appName, style = MaterialTheme.typography.bodyLarge)
                                     Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
                     }
                 }
             }
+        }
+    }
+}
+
         }
 
         // Close Button
@@ -176,6 +185,7 @@ fun AppPickerSheet(
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -462,9 +472,10 @@ fun AppProfileConfigDialog(
                                             contentDescription = option,
                                             modifier = Modifier.size(24.dp)
                                         )
-                                    }
-                                }
-                            }
+        }
+    }
+}
+
                         }
 
                         // Tuning Placeholders
@@ -770,3 +781,4 @@ fun AppProfileConfigDialog(
             }
         }
     }
+}

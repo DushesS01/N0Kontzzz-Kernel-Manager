@@ -321,5 +321,3 @@ fun BatteryHistoryScreen(
         }
     }
 }
-
-@OptIn(ExperimentalMaterial3Api::class)

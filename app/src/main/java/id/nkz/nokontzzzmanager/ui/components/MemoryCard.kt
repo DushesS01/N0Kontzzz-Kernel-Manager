@@ -40,7 +40,7 @@ private fun formatTimeWithSeconds(timeInMillis: Long): String {
 
 // Helper function to format storage size
 @Composable
-private fun formatStorageSize(bytes: Long): String {
+internal fun formatStorageSize(bytes: Long): String {
     val tb = 1_000_000_000_000L
     val gb = 1_000_000_000L
     val mb = 1_000_000L
@@ -432,7 +432,124 @@ private fun MemoryStatsSection(
 }
 
 @Composable
-private fun SystemStatItem(
+private fun StorageProgressSection(
+    storageInfo: StorageInfo
+) {
+    val usedPercentage = if (storageInfo.totalSpace > 0) {
+        ((storageInfo.usedSpace.toDouble() / storageInfo.totalSpace.toDouble()) * 100).roundToInt()
+    } else 0
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Storage,
+                    contentDescription = stringResource(id = R.string.internal_storage),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = stringResource(id = R.string.internal_storage),
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Text(
+                text = stringResource(id = R.string.storage_usage_template, formatStorageSize(storageInfo.usedSpace), formatStorageSize(storageInfo.totalSpace)),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MaterialTheme.colorScheme.tertiary
+            )
+        }
+
+        val progressColor = when {
+            usedPercentage < 60 -> MaterialTheme.colorScheme.primary
+            usedPercentage < 80 -> MaterialTheme.colorScheme.tertiary
+            else -> MaterialTheme.colorScheme.error
+        }
+        LinearProgressIndicator(
+            progress = { usedPercentage / 100f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp)),
+            color = progressColor,
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
+    }
+}
+
+@Composable
+private fun StorageStatsSection(
+    storageInfo: StorageInfo
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.system_stats_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                SystemStatItem(
+                    icon = Icons.Default.Storage,
+                    label = stringResource(id = R.string.used_storage),
+                    value = formatStorageSize(storageInfo.usedSpace),
+                    modifier = Modifier.weight(1f)
+                )
+                SystemStatItem(
+                    icon = Icons.Default.FolderOpen,
+                    label = stringResource(id = R.string.free_storage),
+                    value = formatStorageSize(storageInfo.freeSpace),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                SystemStatItem(
+                    icon = Icons.Default.Storage,
+                    label = stringResource(id = R.string.total_storage),
+                    value = formatStorageSize(storageInfo.totalSpace),
+                    modifier = Modifier.weight(1f)
+                )
+                SystemStatItem(
+                    icon = Icons.Default.Analytics,
+                    label = stringResource(id = R.string.usage_percentage_label),
+                    value = stringResource(id = R.string.usage_percentage, ((storageInfo.usedSpace.toDouble() / storageInfo.totalSpace.toDouble()) * 100).roundToInt()),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SystemStatItem(
     icon: ImageVector,
     label: String,
     value: String,

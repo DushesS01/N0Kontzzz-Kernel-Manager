@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import id.nkz.nokontzzzmanager.R
 import id.nkz.nokontzzzmanager.ui.components.NkmDialog
+import id.nkz.nokontzzzmanager.ui.components.getDialogListItemShape
 
 @Composable
 fun TcpCongestionDialog(

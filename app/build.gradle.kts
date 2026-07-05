@@ -8,7 +8,7 @@ plugins {
 
 configure <com.android.build.api.dsl.ApplicationExtension> {
     namespace = "id.nkz.nokontzzzmanager"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "id.nkz.nokontzzzmanager"

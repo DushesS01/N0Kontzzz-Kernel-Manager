@@ -20,6 +20,7 @@ import id.nkz.nokontzzzmanager.data.database.GameDao
 import id.nkz.nokontzzzmanager.data.repository.BatteryMonitorProvider
 import id.nkz.nokontzzzmanager.data.repository.CpuMonitorProvider
 import id.nkz.nokontzzzmanager.data.repository.KernelFeatureRepository
+import id.nkz.nokontzzzmanager.data.repository.KernelInfoProvider
 import id.nkz.nokontzzzmanager.data.repository.MemoryMonitorProvider
 import id.nkz.nokontzzzmanager.data.repository.RootRepository
 import id.nkz.nokontzzzmanager.data.repository.SysfsHelper
@@ -59,8 +60,9 @@ object AppModule {
         cpuMonitor: CpuMonitorProvider,
         batteryMonitor: BatteryMonitorProvider,
         memoryMonitor: MemoryMonitorProvider,
+        kernelInfoProvider: KernelInfoProvider,
     ): SystemRepository =
-        SystemRepository(context, tuningRepository, rootRepository, sysfsHelper, kernelFeatures, cpuMonitor, batteryMonitor, memoryMonitor)
+        SystemRepository(context, tuningRepository, rootRepository, sysfsHelper, kernelFeatures, cpuMonitor, batteryMonitor, memoryMonitor, kernelInfoProvider)
 
     @Provides
     @Singleton

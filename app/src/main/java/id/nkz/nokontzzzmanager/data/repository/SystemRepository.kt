@@ -63,6 +63,7 @@ class SystemRepository @Inject constructor(
     private val cpuMonitor: CpuMonitorProvider,
     private val batteryMonitor: BatteryMonitorProvider,
     private val memoryMonitor: MemoryMonitorProvider,
+    private val kernelInfoProvider: KernelInfoProvider,
 ) {
 
     companion object {
@@ -165,7 +166,8 @@ class SystemRepository @Inject constructor(
     private var cachedGlVersion: String? = null
 
     private fun getDetailedGlVersion(): String {
-        if (cachedGlVersion != null && cachedGlVersion.isNotEmpty()) return cachedGlVersion
+        val cached = cachedGlVersion
+        if (cached != null && cached.isNotEmpty()) return cached
 
         // 1. Try basic ActivityManager first as fallback
         var version = try {
@@ -441,7 +443,7 @@ class SystemRepository @Inject constructor(
         return readFileToString("/proc/sys/kernel/random/boot_id", "Boot ID")
     }
 
-    suspend fun getKernelInfo(): KernelInfo = id.nkz.nokontzzzmanager.data.repository.getKernelInfo(sysfsHelper)
+    suspend fun getKernelInfo(): KernelInfo = kernelInfoProvider.getKernelInfo()
 
     // KGSL — delegated to KernelFeatureRepository
     suspend fun getKgslSkipZeroing(): Boolean = kernelFeatures.getKgslSkipZeroing()

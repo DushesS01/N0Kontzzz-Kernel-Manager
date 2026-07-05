@@ -126,10 +126,9 @@ class CpuMonitorProvider @Inject constructor(
                     CpuCluster(
                         name = name,
                         availableGovernors = availGovs,
-                        availableFrequencies = availFreqs,
-                        currentGovernor = currentGov,
-                        minFrequency = minFreq,
-                        maxFrequency = maxFreq
+                        governor = currentGov,
+                        minFreq = minFreq,
+                        maxFreq = maxFreq
                     )
                 )
             } catch (_: Exception) { }

@@ -31,10 +31,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import id.nkz.nokontzzzmanager.ui.components.IndeterminateExpressiveLoadingIndicator
-import id.nkz.nokontzzzmanager.ui.components.CpuGovernorCard
 import id.nkz.nokontzzzmanager.ui.components.GpuControlCard
 import id.nkz.nokontzzzmanager.ui.components.SwappinessCard
 import id.nkz.nokontzzzmanager.ui.components.ThermalCard

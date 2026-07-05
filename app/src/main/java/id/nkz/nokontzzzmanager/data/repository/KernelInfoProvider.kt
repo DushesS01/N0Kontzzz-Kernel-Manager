@@ -1,13 +1,32 @@
 package id.nkz.nokontzzzmanager.data.repository
 
+import android.content.Context
 import android.os.Build
+import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import id.nkz.nokontzzzmanager.data.model.KernelInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
+import javax.inject.Inject
+import javax.inject.Singleton
 
-    suspend fun getKernelInfo(sysfsHelper: SysfsHelper): KernelInfo {
+@Singleton
+class KernelInfoProvider @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val sysfsHelper: SysfsHelper
+) {
+    private fun getSystemProperty(key: String): String? = try {
+        val process = Runtime.getRuntime().exec(arrayOf("getprop", key))
+        val result = BufferedReader(InputStreamReader(process.inputStream)).readLine()?.trim()
+        process.waitFor()
+        process.destroy()
+        result?.ifBlank { null }
+    } catch (_: Exception) { null }
+
+    suspend fun getKernelInfo(): KernelInfo {
 
         // Get kernel version
         val version = sysfsHelper.readFileToString("/proc/version", "Kernel Version")
@@ -310,4 +329,5 @@ import java.io.InputStreamReader
             wireguardVersion = wireguardVersion
         )
     }
+}
 
