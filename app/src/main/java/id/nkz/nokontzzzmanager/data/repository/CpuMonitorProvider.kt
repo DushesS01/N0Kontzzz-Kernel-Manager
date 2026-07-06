@@ -114,13 +114,13 @@ class CpuMonitorProvider @Inject constructor(
                     "$cpuBase/cpu$offset/cpufreq/scaling_governor", "CPU$offset Current Gov"
                 ) ?: "unknown"
 
-                val minFreq = sysfsHelper.readFileToString(
+                val minFreq = (sysfsHelper.readFileToString(
                     "$cpuBase/cpu$offset/cpufreq/scaling_min_freq", "CPU$offset Min Freq"
-                )?.toIntOrNull() ?: 0
+                )?.toLongOrNull()?.div(1000))?.toInt() ?: 0
 
-                val maxFreq = sysfsHelper.readFileToString(
+                val maxFreq = (sysfsHelper.readFileToString(
                     "$cpuBase/cpu$offset/cpufreq/scaling_max_freq", "CPU$offset Max Freq"
-                )?.toIntOrNull() ?: 0
+                )?.toLongOrNull()?.div(1000))?.toInt() ?: 0
 
                 clusters.add(
                     CpuCluster(
