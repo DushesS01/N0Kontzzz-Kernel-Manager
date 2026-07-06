@@ -65,7 +65,7 @@ class ProcessMonitorViewModel @Inject constructor(
         }
 
         monitorJob = viewModelScope.launch(Dispatchers.IO) {
-            var lastCpuStat: Pair<Long, Map<String, Long>>? = null
+            var lastCpuStat: CpuStat? = null
 
             while (isActive) {
                 try {

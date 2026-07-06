@@ -427,6 +427,7 @@ class FpsMonitorManager @Inject constructor(
             cpuFreqLittleHistory = recordedCpuFreqLittle.toList(),
             cpuFreqBigHistory = recordedCpuFreqBig.toList(),
             cpuFreqPrimeHistory = recordedCpuFreqPrime.toList(),
+            batteryPowerHistory = recordedBatteryPower.toList(),
             batteryLevelHistory = recordedBatteryLevel.toList()
         )
     }
