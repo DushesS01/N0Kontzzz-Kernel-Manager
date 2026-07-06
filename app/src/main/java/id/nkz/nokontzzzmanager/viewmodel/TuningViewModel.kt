@@ -235,8 +235,26 @@ class TuningViewModel @Inject constructor(
     /* ---------------- Init ---------------- */
     init {
         Log.d("TuningVM_Init", "ViewModel initializing...")
-        // initializeCpuStateFlows() // Removed as it is handled in the field declaration init
+        // Pre-seed cluster state from cached prefs so UI shows instantly (no "...")
+        cpuClusters.forEach { cluster ->
+            val cachedGov = preferenceManager.getCpuGov(cluster)
+            val gov = if (!cachedGov.isNullOrEmpty()) cachedGov
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_governor").readText().trim() }.getOrNull()
+            if (!gov.isNullOrEmpty()) {
+                _currentCpuGovernors.getOrPut(cluster) { MutableStateFlow("...") }.value = gov
+            }
+            val cachedMin = preferenceManager.getCpuMinFreq(cluster)
+            val cachedMax = preferenceManager.getCpuMaxFreq(cluster)
+            val min = if (cachedMin > 0) cachedMin
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_min_freq").readText().trim().toLong().div(1000).toInt() }.getOrElse { -1 }
+            val max = if (cachedMax > 0) cachedMax
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_max_freq").readText().trim().toLong().div(1000).toInt() }.getOrElse { -1 }
+            if (min > 0 && max > 0) {
+                _currentCpuFrequencies.getOrPut(cluster) { MutableStateFlow(0 to 0) }.value = min to max
+            }
+        }
         fetchDynamicCpuClusters()
+        loadAllData()
         Log.d("TuningVM_Init", "ViewModel initialization complete.")
     }
 
@@ -554,28 +572,39 @@ class TuningViewModel @Inject constructor(
                 clusters.forEach { cluster ->
                     launch {
                         try {
-                            repo.getCpuGov(cluster).take(1).collect { _currentCpuGovernors[cluster]?.value = it }
+                            repo.getCpuGov(cluster).take(1).collect { gov ->
+                                _currentCpuGovernors[cluster]?.value = gov
+                                // Cache for instant pre-seed on next launch
+                                if (gov.isNotEmpty() && gov != "...") preferenceManager.setCpuGov(cluster, gov)
+                            }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching CPU governor for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getCpuFreq(cluster).take(1).collect { _currentCpuFrequencies[cluster]?.value = it }
+                            repo.getCpuFreq(cluster).take(1).collect { pair ->
+                                _currentCpuFrequencies[cluster]?.value = pair
+                                // Cache for instant pre-seed on next launch
+                                if (pair.first > 0 && pair.second > 0) {
+                                    preferenceManager.setCpuMinFreq(cluster, pair.first)
+                                    preferenceManager.setCpuMaxFreq(cluster, pair.second)
+                                }
+                            }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching CPU frequency for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getAvailableCpuGovernors(cluster).collect { tempGovernors[cluster] = it }
+                            repo.getAvailableCpuGovernors(cluster).take(1).collect { tempGovernors[cluster] = it }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching available CPU governors for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getAvailableCpuFrequencies(cluster).collect { tempFreqs[cluster] = it }
+                            repo.getAvailableCpuFrequencies(cluster).take(1).collect { tempFreqs[cluster] = it }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching available CPU frequencies for $cluster", e)
                         }
