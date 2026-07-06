@@ -212,7 +212,7 @@ fun ProcessItem(process: ProcessInfo) {
             Row(modifier = Modifier.width(160.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 // CPU
                 Text(
-                    text = String.format(Locale.getDefault(), "%.1f%%", process.cpu),
+                    text = java.text.DecimalFormat("#.#").format(process.cpu) + "%",
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                     color = if (process.cpu > 20) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.width(50.dp).padding(end = 8.dp),
