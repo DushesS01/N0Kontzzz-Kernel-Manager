@@ -506,11 +506,13 @@ private fun BatteryStatsSection(
                     value = run {
                         val formattedVoltage = if (batteryInfo.voltage > 0) {
                             val voltageInVolts = when {
-                                batteryInfo.voltage > 1000000 -> batteryInfo.voltage / 1000000f
-                                batteryInfo.voltage > 1000 -> batteryInfo.voltage / 1000f
-                                else -> batteryInfo.voltage
-                            }
-                            String.format(Locale.getDefault(), "%.2f", voltageInVolts).trimEnd('0').trimEnd('.')
+                                                            batteryInfo.voltage > 1000000 -> batteryInfo.voltage / 1000000f
+                                                            batteryInfo.voltage > 1000 -> batteryInfo.voltage / 1000f
+                                                            else -> batteryInfo.voltage
+                                                        }
+                                                        // Use DecimalFormat instead of String.format(Locale.getDefault(), ...)
+                                                        // to avoid NonObservableLocale lint error in Compose
+                                                        java.text.DecimalFormat("#.##").apply { minimumFractionDigits = 2 }.format(voltageInVolts)
                         } else "0"
                         stringResource(id = R.string.v, formattedVoltage)
                     },
