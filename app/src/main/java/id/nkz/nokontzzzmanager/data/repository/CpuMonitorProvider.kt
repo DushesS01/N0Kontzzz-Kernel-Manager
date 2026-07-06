@@ -94,9 +94,9 @@ class CpuMonitorProvider @Inject constructor(
         val cpuBase = "/sys/devices/system/cpu"
 
         val clusterOffsets = when {
-            cores >= 8 -> listOf(0 to "cpu0", 4 to "cpu4", 7 to "cpu7")
-            cores >= 4 -> listOf(0 to "cpu0", 4 to "cpu4")
-            else -> listOf(0 to "cpu0")
+            cores >= 8 -> listOf(0 to "Little Cluster", 4 to "Big Cluster", 7 to "Prime Cluster")
+            cores >= 4 -> listOf(0 to "Little Cluster", 4 to "Big Cluster")
+            else -> listOf(0 to "Little Cluster")
         }
 
         for ((offset, name) in clusterOffsets) {

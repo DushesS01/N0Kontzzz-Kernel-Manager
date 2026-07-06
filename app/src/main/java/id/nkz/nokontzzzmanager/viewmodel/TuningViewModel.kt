@@ -546,8 +546,8 @@ class TuningViewModel @Inject constructor(
         val tempGovernors = mutableMapOf<String, List<String>>()
         val tempFreqs = mutableMapOf<String, List<Int>>()
         
-        // Wait for dynamic clusters to be loaded
-        val clusters = _dynamicCpuClusters.value
+        // Wait for dynamic clusters to be loaded (not just the default fallback)
+        val clusters = _dynamicCpuClusters.first { it.isNotEmpty() }
 
         try {
             coroutineScope {
