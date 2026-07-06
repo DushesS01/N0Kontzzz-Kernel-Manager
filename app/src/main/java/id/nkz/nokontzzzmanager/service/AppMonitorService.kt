@@ -2,7 +2,6 @@ package id.nkz.nokontzzzmanager.service
 
 import android.app.Service
 import android.content.Context
-import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Intent
 import android.os.IBinder
@@ -17,7 +16,6 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 import id.nkz.nokontzzzmanager.data.repository.TuningRepository
-
 import id.nkz.nokontzzzmanager.data.repository.ThermalRepository
 
 @AndroidEntryPoint
@@ -139,10 +137,11 @@ class AppMonitorService : Service() {
             while (isActive) {
                 if (powerManager.isInteractive) {
                     checkForegroundApp()
-                    delay(1000) // Check every 1 second
+                    delay(5000) // Screen on: check every 5 seconds (was 1s)
                 } else {
-                    // Screen is off, pause monitoring
-                    delay(5000)
+                    // Screen is off — minimal wake-ups.
+                    // Wake once every 30s only to detect if screen turned back on faster
+                    delay(30_000)
                 }
             }
         }
@@ -160,45 +159,54 @@ class AppMonitorService : Service() {
             lastPackageName = currentApp
             handleAppChange(currentApp)
         } else if (currentApp == null) {
-            // Log once in a while or only if it was not null before to avoid spam
-            // But for debugging, let's log if it's null
             Log.w("AppMonitorService", "getForegroundPackageName returned null. Check Usage Access permission.")
         }
     }
 
-    private fun getForegroundPackageName(): String? {
-        val endTime = System.currentTimeMillis()
-        val startTime = endTime - 10000 // Look back 10 seconds
-        
-        // 1. Try UsageEvents (most accurate for transitions)
-        val events = usageStatsManager.queryEvents(startTime, endTime)
-        val event = UsageEvents.Event()
-        var lastResumedApp: String? = null
-        var eventCount = 0
+    private var cachedForeground: Pair<String, Long>? = null
 
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            eventCount++
-            if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                lastResumedApp = event.packageName
+    private fun getForegroundPackageName(): String? {
+        val now = System.currentTimeMillis()
+
+        // 1. Cache hit (valid for 3 seconds -- covers repeated callers)
+        cachedForeground?.let { (cachedPkg, cachedTime) ->
+            if (now - cachedTime < 3000L) {
+                return cachedPkg
             }
         }
-        
-        if (lastResumedApp != null) {
-            Log.d("AppMonitorService", "Found foreground app via UsageEvents: $lastResumedApp (from $eventCount events)")
-            return lastResumedApp
-        }
 
-        // 2. Fallback to queryUsageStats (good for initial state)
-        val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime)
-        if (!stats.isNullOrEmpty()) {
-            val topApp = stats.maxByOrNull { it.lastTimeUsed }?.packageName
-            Log.d("AppMonitorService", "Found foreground app via queryUsageStats: $topApp (from ${stats.size} stats)")
+        // 2. Primary: queryUsageStats (fastest, single API call)
+        val endTime = now
+        val startTime = endTime - 60_000 // 60-second window is enough
+        val stats = usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_DAILY,
+            startTime,
+            endTime
+        )
+
+        val topApp = if (!stats.isNullOrEmpty()) {
+            stats.maxByOrNull { it.lastTimeUsed }?.packageName
+        } else null
+
+        if (topApp != null) {
+            cachedForeground = topApp to now
             return topApp
         }
 
-        Log.w("AppMonitorService", "No usage events or stats found. Usage Access might be missing.")
-        return null
+        // 3. Fallback (rare): UsageEvents -- only needed when kernel doesn't expose reliable stats
+        val startFb = now - 60_000
+        val events = usageStatsManager.queryEvents(startFb, now)
+        val event = android.app.usage.UsageEvents.Event()
+        var lastResumed: String? = null
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
+                lastResumed = event.packageName
+            }
+        }
+
+        return lastResumed
     }
 
     private suspend fun handleAppChange(packageName: String) {
@@ -349,8 +357,6 @@ class AppMonitorService : Service() {
         if (globalPwr != -1) tuningRepository.setGpuPowerLevel(globalPwr.toFloat())
 
         val globalThrottling = preferenceManager.getGpuThrottling()
-        // If null (not set), we might assume default is enabled (true), or just leave it. 
-        // Safer to revert to preference if set.
         if (globalThrottling != null) {
             systemRepository.setGpuThrottling(globalThrottling)
         }
@@ -401,17 +407,12 @@ class AppMonitorService : Service() {
             }
 
             // Revert cores
-            // IMPORTANT: Use getNumberOfCores() to detect all physical cores, 
-            // even if they were disabled by a profile.
             val cores = tuningRepository.getNumberOfCores()
             for (i in 0 until cores) {
                 val globalOnline = preferenceManager.getCpuCoreOnline(i)
-                // If explicit pref exists, use it. Otherwise assume online (true) or just leave it?
-                // Safer to default to true if we don't know, to avoid stuck offline cores.
                 if (globalOnline != null) {
                     tuningRepository.setCoreOnline(i, globalOnline)
                 } else {
-                    // If no global pref, ensure it's online to be safe
                     tuningRepository.setCoreOnline(i, true)
                 }
             }
@@ -425,20 +426,16 @@ class AppMonitorService : Service() {
             else -> "schedutil"
         }
         
-        // Dynamically get cluster leaders instead of hardcoding
         val clusterNodes = tuningRepository.getClusterLeaders()
         clusterNodes.forEach { cluster ->
              val available = tuningRepository.getAvailableCpuGovernors(cluster).first()
              if (available.contains(targetGovernor)) {
                  tuningRepository.setCpuGov(cluster, targetGovernor)
              } else if (mode == "Balanced") {
-                 // Fallback for Balanced if schedutil is missing
                  when {
                      available.contains("walt") -> tuningRepository.setCpuGov(cluster, "walt")
                      available.contains("interactive") -> tuningRepository.setCpuGov(cluster, "interactive")
                      available.contains("pixutil") -> tuningRepository.setCpuGov(cluster, "pixutil")
-                     // If none match, we simply don't touch it, or we could leave it as is.
-                     // But we should try to move away from performance/powersave if that was the previous state.
                  }
              }
         }
