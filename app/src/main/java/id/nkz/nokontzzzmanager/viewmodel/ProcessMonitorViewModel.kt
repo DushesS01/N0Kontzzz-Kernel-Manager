@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import java.io.File
 
+/** Lightweight per-process data parsed from `ps` only */
 data class ProcessInfo(
     val pid: String,
     val user: String,
@@ -57,103 +57,92 @@ class ProcessMonitorViewModel @Inject constructor(
 
     private var monitorJob: Job? = null
 
-    // State for delta calculation
-    private var prevTotalCpuTime: Long = 0
-    private var prevProcessCpuTimes: Map<String, Long> = emptyMap()
-
     fun startMonitoring() {
         if (monitorJob?.isActive == true) return
 
-        // Set loading true immediately if we have no data
         if (_processes.value.isEmpty()) {
             _isLoading.value = true
         }
 
         monitorJob = viewModelScope.launch(Dispatchers.IO) {
-            // Reset state
-            prevTotalCpuTime = 0
-            prevProcessCpuTimes = emptyMap()
-            
+            var lastCpuStat: Pair<Long, Map<String, Long>>? = null
+
             while (isActive) {
                 try {
-                    // 1. Capture Snapshot directly into memory (avoiding flash storage wear)
-                    // We combine /proc/stat and all process stats into one output
-                    val cmd = "cat /proc/stat; echo '###'; cat /proc/[0-9]*/stat"
-                    val content = rootRepository.run(cmd)
+                    // ── 1. Single, lightweight pass: ps + /proc/stat + targeted /proc/{pid}/stat ──
+                    // Use `ps` as the primary data source; supplement with delta-based
+                    // CPU for the top-N by RSS/Memory processes.
+                    val psOutput = rootRepository.run("ps -A -o PID,USER,%CPU,RSS,ARGS")
+                    val psEntries = parsePsOutput(psOutput)
 
-                    if (content.isBlank()) {
+                    if (psEntries.isEmpty()) {
                         delay(500)
                         continue
                     }
 
-                    val (currentTotalCpu, currentProcessCpuTimes) = parseCpuSnapshot(content)
+                    // ── 2. Delta CPU for the most memory-heavy candidates ──
+                    val topCandidates = psEntries
+                        .sortedByDescending { it.rssKb }
+                        .take(50)
+                        .map { it.pid }
 
-                    // 2. If we have previous data, calculate delta
-                    if (prevTotalCpuTime > 0) {
-                        val totalDelta = currentTotalCpu - prevTotalCpuTime
-                        
-                        if (totalDelta > 0) {
-                            // 3. Get Process Details via PS
-                            val psDetails = getProcessDetails()
+                    val currentCpuStat = readTargetedCpuStats(topCandidates)
 
-                            val newProcessList = mutableListOf<ProcessInfo>()
+                    val cpuMap = if (lastCpuStat != null) {
+                        computeDeltaCpu(lastCpuStat, currentCpuStat)
+                    } else {
+                        emptyMap()
+                    }
+                    lastCpuStat = currentCpuStat
 
-                            for ((pid, currTicks) in currentProcessCpuTimes) {
-                                val prevTicks = prevProcessCpuTimes[pid] ?: 0L
-                                val procDelta = currTicks - prevTicks
-                                
-                                if (procDelta >= 0) {
-                                    val cpuUsage = (procDelta.toFloat() / totalDelta) * 100f
-
-                                    val details = psDetails[pid]
-                                    if (details != null) {
-                                        val isUserApp = details.user.startsWith("u0_") || 
-                                                        details.user.startsWith("app_") || 
-                                                        details.name.contains("com.") || 
-                                                        details.name.contains("id.")
-
-                                        newProcessList.add(
-                                            ProcessInfo(
-                                                pid = pid,
-                                                user = details.user,
-                                                cpu = cpuUsage,
-                                                ram = details.rssMb,
-                                                name = details.name,
-                                                isUserApp = isUserApp
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-
-                            // 4. Sort and Filter
-                            val filtered = when (_filterOption.value) {
-                                ProcessFilter.ALL -> newProcessList
-                                ProcessFilter.USER_APPS -> newProcessList.filter { it.isUserApp }
-                                ProcessFilter.SYSTEM_ROOT -> newProcessList.filter { !it.isUserApp }
-                            }
-
-                            val sorted = when (_sortOption.value) {
-                                ProcessSort.CPU -> filtered.sortedWith(compareByDescending<ProcessInfo> { it.cpu }.thenByDescending { it.ram })
-                                ProcessSort.RAM -> filtered.sortedWith(compareByDescending<ProcessInfo> { it.ram }.thenByDescending { it.cpu })
-                            }
-
-                            _processes.value = sorted.take(_maxProcesses.value)
-                            
-                            // Only hide loading once we have successfully updated the list
-                            _isLoading.value = false
+                    // ── 3. Build ProcessInfo list, preferring delta CPU, falling back to `ps` %CPU ──
+                    val newProcessList = psEntries.mapNotNull { entry ->
+                        val cpuUsage: Float = when {
+                            entry.pid in cpuMap -> cpuMap[entry.pid]!!
+                            entry.psCpu > 0f -> entry.psCpu
+                            else -> 0f
                         }
+
+                        val isUserApp = entry.user.startsWith("u0_") ||
+                                entry.user.startsWith("app_") ||
+                                entry.name.contains("com.") ||
+                                entry.name.contains("id.")
+
+                        ProcessInfo(
+                            pid = entry.pid,
+                            user = entry.user,
+                            cpu = cpuUsage,
+                            ram = entry.rssKb / 1024f,
+                            name = entry.name,
+                            isUserApp = isUserApp
+                        )
                     }
 
-                    // Update Previous State
-                    prevTotalCpuTime = currentTotalCpu
-                    prevProcessCpuTimes = currentProcessCpuTimes
+                    // ── 4. Sort, filter, and cap ──
+                    val sorted = when (_sortOption.value) {
+                        ProcessSort.CPU -> newProcessList
+                            .sortedWith(
+                                compareByDescending<ProcessInfo> { it.cpu }
+                                    .thenByDescending { it.ram }
+                            )
+                        ProcessSort.RAM -> newProcessList
+                            .sortedWith(
+                                compareByDescending<ProcessInfo> { it.ram }
+                                    .thenByDescending { it.cpu }
+                            )
+                    }
+
+                    val filtered = when (_filterOption.value) {
+                        ProcessFilter.ALL -> sorted
+                        ProcessFilter.USER_APPS -> sorted.filter { it.isUserApp }
+                        ProcessFilter.SYSTEM_ROOT -> sorted.filter { !it.isUserApp }
+                    }
+
+                    _processes.value = filtered.take(_maxProcesses.value)
+                    _isLoading.value = false
 
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    // Keep loading true if we failed and list is empty, 
-                    // or maybe turn off if retries fail? 
-                    // For now, let it retry.
                 }
 
                 delay(_sampleRate.value)
@@ -171,89 +160,115 @@ class ProcessMonitorViewModel @Inject constructor(
         _maxProcesses.value = max.coerceIn(5, 100)
         _sortOption.value = sort
         _filterOption.value = filter
-        
-        if (monitorJob?.isActive == true) {
-            // Let the loop pick up new values
-        } else {
+        // Restart if already running
+        if (monitorJob?.isActive != true) {
             startMonitoring()
         }
     }
 
-    private data class PsDetails(val user: String, val rssMb: Float, val name: String)
+    /* ------------------------------------------------------------------ */
 
-    private suspend fun getProcessDetails(): Map<String, PsDetails> {
-        val map = mutableMapOf<String, PsDetails>()
-        try {
-            val output = rootRepository.run("ps -A -o pid,user,rss,args")
-            val lines = output.lines()
-            if (lines.isEmpty()) return map
+    private data class PsEntry(
+        val pid: String,
+        val user: String,
+        val psCpu: Float,
+        val rssKb: Float,
+        val name: String
+    )
 
-            for (i in 1 until lines.size) {
-                val line = lines[i].trim()
-                if (line.isEmpty()) continue
-                
-                val parts = line.split("\\s+".toRegex())
-                if (parts.size < 4) continue
+    /** Parses `ps -A -o PID,USER,%CPU,RSS,ARGS` output */
+    private fun parsePsOutput(output: String): List<PsEntry> {
+        val lines = output.lines()
+        if (lines.size < 2) return emptyList()
 
-                val pid = parts[0]
-                val user = parts[1]
-                val rssKb = parts[2].toFloatOrNull() ?: 0f
-                val rssMb = rssKb / 1024f
+        val entries = mutableListOf<PsEntry>()
+        for (i in 1 until lines.size) { // skip header
+            val line = lines[i].trim()
+            if (line.isEmpty()) continue
 
-                val name = if (parts.size > 3) {
-                    parts.subList(3, parts.size).joinToString(" ")
-                } else {
-                    parts.getOrNull(3) ?: "?"
-                }
-                
-                val simpleName = name.split("/").last()
+            // Fields: PID USER %CPU RSS ARGS...
+            val parts = line.split("\\s+".toRegex())
+            if (parts.size < 5) continue
 
-                map[pid] = PsDetails(user, rssMb, simpleName)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+            val pid = parts[0]
+            val user = parts[1]
+            val psCpu = parts[2].toFloatOrNull() ?: 0f
+            val rssKb = parts[3].toFloatOrNull() ?: 0f
+            val name = if (parts.size > 4) {
+                parts.subList(4, parts.size).joinToString(" ").split("/").last()
+            } else parts.getOrNull(4) ?: "?"
+
+            entries.add(PsEntry(pid, user, psCpu, rssKb, name))
         }
-        return map
+        return entries
     }
 
-    private fun parseCpuSnapshot(content: String): Pair<Long, Map<String, Long>> {
+    /** Reads `/proc/stat` (aggregate) + `/proc/{pid}/stat` for a list of PIDs */
+    data class CpuStat(val total: Long, val procTimes: Map<String, Long>)
+
+    private suspend fun readTargetedCpuStats(pids: List<String>): CpuStat {
+        // Build a single shell command that reads /proc/stat and each /proc/{pid}/stat
+        val sb = StringBuilder().apply {
+            append("cat /proc/stat | grep '^cpu ' ")
+            for (pid in pids) {
+                append("; cat /proc/$pid/stat 2>/dev/null || true")
+            }
+        }
+        val output = rootRepository.run(sb.toString())
+
         var totalCpu: Long = 0
         val procMap = mutableMapOf<String, Long>()
-        
-        val lines = content.lines()
         var parsingProcs = false
-        
-        for (line in lines) {
-            if (line == "###") {
+
+        for (line in output.lines()) {
+            if (line.startsWith("cpu ")) {
+                // Aggregate CPU line: cpu  user nice sys idle iowait irq softirq ...
+                val parts = line.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() }
+                for (i in 1 until parts.size) {
+                    totalCpu += parts[i].toLongOrNull() ?: 0L
+                }
                 parsingProcs = true
                 continue
             }
-            
-            if (!parsingProcs) {
-                if (line.startsWith("cpu ")) {
-                    val parts = line.split("\\s+".toRegex()).filter { it.isNotEmpty() }
-                    for (i in 1 until parts.size) {
-                        totalCpu += parts[i].toLongOrNull() ?: 0L
-                    }
-                }
-            } else {
-                val closeParenIdx = line.lastIndexOf(')')
-                if (closeParenIdx == -1) continue
-                
-                val pidStr = line.substringBefore('(').trim()
-                val statsStr = line.substring(closeParenIdx + 2)
-                val stats = statsStr.split(" ")
-                
-                if (stats.size > 12) {
-                    val utime = stats[11].toLongOrNull() ?: 0L
-                    val stime = stats[12].toLongOrNull() ?: 0L
-                    val totalTicks = utime + stime
-                    procMap[pidStr] = totalTicks
-                }
+
+            if (!parsingProcs) continue
+
+            val closeParenIdx = line.lastIndexOf(')')
+            if (closeParenIdx == -1) continue
+
+            val pidStr = line.substringBefore('(').trim()
+            val statsStr = line.substring(closeParenIdx + 2)
+            val stats = statsStr.split(" ")
+
+            if (stats.size > 12) {
+                val utime = stats[11].toLongOrNull() ?: 0L
+                val stime = stats[12].toLongOrNull() ?: 0L
+                procMap[pidStr] = utime + stime
             }
         }
-        
-        return Pair(totalCpu, procMap)
+
+        return CpuStat(totalCpu, procMap)
+    }
+
+    /** Computes CPU percentage from delta between two samples */
+    private fun computeDeltaCpu(
+        prev: CpuStat,
+        curr: CpuStat
+    ): Map<String, Float> {
+        val (prevTotal, prevMap) = prev
+        val totalDelta = curr.total - prevTotal
+        if (totalDelta <= 0 || prevMap.isEmpty()) return emptyMap()
+
+        return curr.procTimes.mapNotNull { (pid, currTicks) ->
+            val prevTicks = prevMap[pid] ?: 0L
+            val delta = currTicks - prevTicks
+            if (delta > 0) {
+                val cpuUsage = (delta.toFloat() / totalDelta.toFloat()) * 100f
+                pid to cpuUsage
+            } else {
+                null
+            }
+        }.toMap()
     }
 
     override fun onCleared() {
