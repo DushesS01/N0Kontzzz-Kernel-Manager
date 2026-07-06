@@ -33,8 +33,10 @@ class FpsMonitorManager @Inject constructor(
     private val systemRepository: id.nkz.nokontzzzmanager.data.repository.SystemRepository
 ) {
     companion object {
-        // Limit to 60 minutes. With GZIP compression, this will easily fit in CursorWindow.
-        const val MAX_BENCHMARK_DURATION_MS = 60 * 60 * 1000L 
+        const val MAX_BENCHMARK_DURATION_MS = 60 * 60 * 1000L
+        private const val LAYER_CACHE_TTL_MS = 30_000L
+        private const val DELAY_FAST_MS = 500L
+        private const val DELAY_STABLE_MS = 1000L
     }
 
     private val _fpsData = MutableStateFlow(FpsData())
@@ -70,7 +72,18 @@ class FpsMonitorManager @Inject constructor(
     // Baseline refresh rate info
     private var refreshRate = 60f
 
-    fun startMonitoring(packageName: String, preferredLayerPattern: String? = null, onLayerFound: (String) -> Unit = {}) {
+    // ── Layer cache per package: (candidates, timestamp) ──
+    private data class LayerCacheEntry(
+        val candidates: List<String>,
+        val timestamp: Long
+    )
+    private val layerCache = mutableMapOf<String, LayerCacheEntry>()
+
+    fun startMonitoring(
+        packageName: String,
+        preferredLayerPattern: String? = null,
+        onLayerFound: (String) -> Unit = {}
+    ) {
         if (isMonitoring && currentPackageName == packageName) return
         
         Log.d("FpsMonitor", "Starting monitoring for $packageName (preferred: $preferredLayerPattern)")
@@ -83,7 +96,6 @@ class FpsMonitorManager @Inject constructor(
         monitorJob = scope.launch {
             // Clear old latency data to ensure we get fresh frames
             rootRepository.run("dumpsys SurfaceFlinger --latency-clear")
-            // Small delay to allow buffer to start filling
             delay(500)
 
             refreshRate = getRefreshRate()
@@ -94,98 +106,31 @@ class FpsMonitorManager @Inject constructor(
             var allCandidates = listOf<String>()
             var layerValidated = false
             var currentLayerFailureCount = 0
-            
+            var layerStableSince = 0L // last time layer was validated or changed
+
             lastTimestampNs = 0L
             lastFrameEndNs = 0L
 
-            // Secondary job for polling system metrics (CPU, GPU, Temp) during benchmarking
-            val metricsJob = launch {
-                // Pre-calculate clusters core mapping once
-                val clusters = systemRepository.getCpuClusters()
-                val cores = Runtime.getRuntime().availableProcessors()
-                
-                // For simplified tracking, we'll try to map the clusters based on their name
-                val littleClusterCores = mutableListOf<Int>()
-                val bigClusterCores = mutableListOf<Int>()
-                val primeClusterCores = mutableListOf<Int>()
-                
-                try {
-                    val coreFreqRanges = mutableMapOf<Int, Pair<Int, Int>>()
-                    for (i in 0 until cores) {
-                        val minPath = "/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_min_freq"
-                        val maxPath = "/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq"
-                        
-                        // Using rootRepository for frequency reading to avoid permission issues
-                        val minStr = rootRepository.run("cat $minPath").trim()
-                        val maxStr = rootRepository.run("cat $maxPath").trim()
-                        
-                        val min = minStr.toIntOrNull() ?: 0
-                        val max = maxStr.toIntOrNull() ?: 0
-                        if (max > 0) coreFreqRanges[i] = Pair(min, max)
-                    }
-                    
-                    val frequencyGroups = coreFreqRanges.values.distinct().sortedBy { it.second }
-                    frequencyGroups.forEachIndexed { index, pair ->
-                        val coresInThisGroup = coreFreqRanges.filter { it.value == pair }.keys
-                        when {
-                            index == 0 -> littleClusterCores.addAll(coresInThisGroup)
-                            index == frequencyGroups.size - 1 && frequencyGroups.size > 1 -> primeClusterCores.addAll(coresInThisGroup)
-                            else -> bigClusterCores.addAll(coresInThisGroup)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("FpsMonitor", "Error identifying clusters", e)
-                }
+            // ── Metrics job is now started/stopped per benchmarking state ──
+            var metricsJob: kotlinx.coroutines.Job? = null
 
-                while (isActive) {
-                    try {
-                        val batteryInfo = systemRepository.getBatteryInfo()
-                        
-                        // Update real-time state for overlay
-                        _fpsData.value = _fpsData.value.copy(
-                            batteryLevel = batteryInfo.level,
-                            batteryTemp = batteryInfo.temp
-                        )
-
-                        if (isBenchmarking) {
-                            val cpuInfo = systemRepository.getCpuRealtime()
-                            val gpuInfo = systemRepository.getGpuRealtime()
-
-                            recordedCpuUsage.add(cpuInfo.cpuLoadPercentage ?: 0f)
-                            recordedCpuTemp.add(cpuInfo.temp)
-                            recordedGpuUsage.add(gpuInfo.usagePercentage ?: 0f)
-                            recordedGpuFreq.add(gpuInfo.currentFreq)
-                            recordedTemp.add(batteryInfo.temp)
-                            
-                            // Record Cluster Frequencies (average of online cores in cluster)
-                            if (littleClusterCores.isNotEmpty()) {
-                                val avgFreq = littleClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
-                                recordedCpuFreqLittle.add(avgFreq)
-                            }
-                            if (bigClusterCores.isNotEmpty()) {
-                                val avgFreq = bigClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
-                                recordedCpuFreqBig.add(avgFreq)
-                            }
-                            if (primeClusterCores.isNotEmpty()) {
-                                val avgFreq = primeClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
-                                recordedCpuFreqPrime.add(avgFreq)
-                            }
-                            
-                            // Record Battery Info
-                            recordedBatteryPower.add(batteryInfo.chargingWattage)
-                            recordedBatteryLevel.add(batteryInfo.level)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("FpsMonitor", "Error polling metrics", e)
-                    }
-                    delay(1000)
-                }
+            fun startMetricsJobIfNeeded() {
+                if (metricsJob?.isActive == true) return
+                metricsJob = launch { metricsPollingLoop() }
             }
+
+            fun stopMetricsJob() {
+                metricsJob?.cancel()
+                metricsJob = null
+            }
+
+            var adaptiveDelay = DELAY_FAST_MS
 
             while (isMonitoring && isActive) {
                 // Refresh candidates if we don't have a working layer
                 if (currentLayer == null) {
-                    allCandidates = getCandidateLayers(packageName, preferredLayerPattern)
+                    val cached = getCachedCandidateLayers(packageName, preferredLayerPattern)
+                    allCandidates = cached
                     candidateIndex = 0
                     if (allCandidates.isNotEmpty()) {
                         currentLayer = cleanLayerName(allCandidates[candidateIndex])
@@ -202,7 +147,6 @@ class FpsMonitorManager @Inject constructor(
                     if (!success) {
                         currentLayerFailureCount++
 
-                        // Patience logic: Give the preferred layer more time to "wake up"
                         val maxRetries = if (preferredLayerPattern != null && currentLayer.contains(preferredLayerPattern)) 5 else 2
 
                         if (currentLayerFailureCount >= maxRetries) {
@@ -216,49 +160,137 @@ class FpsMonitorManager @Inject constructor(
                                 currentLayer = cleanLayerName(allCandidates[candidateIndex])
                                 Log.v("FpsMonitor", "Switching to next candidate: $currentLayer")
                             } else {
-                                // Cycled through all, reset to find new ones
                                 currentLayer = null
-                                delay(1000) 
+                                delay(2000)
+                                continue // skip the loop-delay at the bottom
                             }
                         }
+                        // Still on fast pace when trying to stabilise
+                        adaptiveDelay = DELAY_FAST_MS
                     } else {
                         currentLayerFailureCount = 0
                         if (!layerValidated) {
-                            // Success! Save this pattern
                             val fullRaw = allCandidates[candidateIndex]
                             val pattern = extractPattern(fullRaw)
                             if (pattern != null) {
-                                Log.i("FpsMonitor", "Valid rendering layer found: $pattern. Saving for future use.")
+                                Log.i("FpsMonitor", "Valid layer found: $pattern. Saving.")
                                 onLayerFound(pattern)
                                 layerValidated = true
+                                layerStableSince = System.currentTimeMillis()
                             }
+                        } else if (layerStableSince > 0L &&
+                            System.currentTimeMillis() - layerStableSince > 5000L
+                        ) {
+                            // Layer has been stable for 5+ s – slow down
+                            adaptiveDelay = DELAY_STABLE_MS
                         }
                     }
-                }
- else {
-                    Log.w("FpsMonitor", "No valid rendering layers found for $packageName")
+                } else {
+                    Log.w("FpsMonitor", "No valid layers for $packageName")
                     _fpsData.value = _fpsData.value.copy(currentFps = 0f)
                     delay(2000)
+                    continue
                 }
-                
+
                 if (isBenchmarking) {
                     val duration = System.currentTimeMillis() - benchmarkStartTime
-                    _fpsData.value = _fpsData.value.copy(
-                        currentBenchmarkDuration = duration
-                    )
+                    _fpsData.value = _fpsData.value.copy(currentBenchmarkDuration = duration)
                     
                     if (duration >= MAX_BENCHMARK_DURATION_MS) {
-                        Log.w("FpsMonitor", "Benchmark reached max duration ($duration ms). Auto-stopping to prevent database crash.")
-                        scope.launch {
-                            _autoStopEvent.emit(Unit)
-                        }
+                        Log.w("FpsMonitor", "Benchmark hit max time. Auto-stopping.")
+                        scope.launch { _autoStopEvent.emit(Unit) }
                         stopBenchmarking()
                     }
+                    if (metricsJob?.isActive != true) startMetricsJobIfNeeded()
+                } else {
+                    if (metricsJob?.isActive == true) stopMetricsJob()
                 }
-                
-                delay(500) // update every 500ms for safety on high refresh screens
+
+                delay(adaptiveDelay.coerceAtMost(DELAY_FAST_MS).coerceAtLeast(DELAY_STABLE_MS))
             }
-            metricsJob.cancel()
+
+            stopMetricsJob()
+        }
+    }
+
+    /** Polling for CPU, GPU, battery — only runs while benchmarking */
+    private suspend fun metricsPollingLoop() {
+        // Pre-calculate clusters core mapping once
+        val clusters = try {
+            systemRepository.getCpuClusters()
+        } catch (_: Exception) { emptyList() }
+
+        val cores = Runtime.getRuntime().availableProcessors()
+        val littleClusterCores = mutableListOf<Int>()
+        val bigClusterCores = mutableListOf<Int>()
+        val primeClusterCores = mutableListOf<Int>()
+
+        try {
+            val coreFreqRanges = mutableMapOf<Int, Pair<Int, Int>>()
+            for (i in 0 until cores) {
+                val minPath = "/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_min_freq"
+                val maxPath = "/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq"
+                
+                val minStr = rootRepository.run("cat $minPath 2>/dev/null || true").trim()
+                val maxStr = rootRepository.run("cat $maxPath 2>/dev/null || true").trim()
+                
+                val min = minStr.toIntOrNull() ?: 0
+                val max = maxStr.toIntOrNull() ?: 0
+                if (max > 0) coreFreqRanges[i] = Pair(min, max)
+            }
+            
+            val frequencyGroups = coreFreqRanges.values.distinct().sortedBy { it.second }
+            frequencyGroups.forEachIndexed { index, pair ->
+                val coresInThisGroup = coreFreqRanges.filter { it.value == pair }.keys
+                when {
+                    index == 0 -> littleClusterCores.addAll(coresInThisGroup)
+                    index == frequencyGroups.size - 1 && frequencyGroups.size > 1 -> primeClusterCores.addAll(coresInThisGroup)
+                    else -> bigClusterCores.addAll(coresInThisGroup)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FpsMonitor", "Error identifying clusters for metricsJob", e)
+        }
+
+        while (isActive) {
+            try {
+                val batteryInfo = systemRepository.getBatteryInfo()
+                
+                _fpsData.value = _fpsData.value.copy(
+                    batteryLevel = batteryInfo.level,
+                    batteryTemp = batteryInfo.temp
+                )
+
+                if (isBenchmarking) {
+                    val cpuInfo = systemRepository.getCpuRealtime()
+                    val gpuInfo = systemRepository.getGpuRealtime()
+
+                    recordedCpuUsage.add(cpuInfo.cpuLoadPercentage ?: 0f)
+                    recordedCpuTemp.add(cpuInfo.temp)
+                    recordedGpuUsage.add(gpuInfo.usagePercentage ?: 0f)
+                    recordedGpuFreq.add(gpuInfo.currentFreq)
+                    recordedTemp.add(batteryInfo.temp)
+                    
+                    if (littleClusterCores.isNotEmpty()) {
+                        val avgFreq = littleClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
+                        recordedCpuFreqLittle.add(avgFreq)
+                    }
+                    if (bigClusterCores.isNotEmpty()) {
+                        val avgFreq = bigClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
+                        recordedCpuFreqBig.add(avgFreq)
+                    }
+                    if (primeClusterCores.isNotEmpty()) {
+                        val avgFreq = primeClusterCores.map { cpuInfo.freqs.getOrNull(it) ?: 0 }.filter { it > 0 }.let { if (it.isEmpty()) 0 else it.average().toInt() }
+                        recordedCpuFreqPrime.add(avgFreq)
+                    }
+                    
+                    recordedBatteryPower.add(batteryInfo.chargingWattage)
+                    recordedBatteryLevel.add(batteryInfo.level)
+                }
+            } catch (e: Exception) {
+                Log.e("FpsMonitor", "Error polling metrics", e)
+            }
+            delay(1000)
         }
     }
 
@@ -335,7 +367,6 @@ class FpsMonitorManager @Inject constructor(
         
         if (recordedFrameTimes.isEmpty()) return null
 
-        // Calculate aggregate FPS per second for consistent stats
         val fpsPerSecond = mutableListOf<Float>()
         var currentWindowMs = 0f
         var frameCount = 0
@@ -358,7 +389,6 @@ class FpsMonitorManager @Inject constructor(
         val maxFps = if (fpsPerSecond.isNotEmpty()) fpsPerSecond.maxOrNull() ?: 0f else 0f
         val minFps = if (fpsPerSecond.isNotEmpty()) fpsPerSecond.minOrNull() ?: 0f else 0f
         
-        // Variance calculation
         val variance = if (fpsPerSecond.size > 1) {
             val mean = fpsPerSecond.average()
             fpsPerSecond.map { (it - mean) * (it - mean) }.average().toFloat()
@@ -397,7 +427,6 @@ class FpsMonitorManager @Inject constructor(
             cpuFreqLittleHistory = recordedCpuFreqLittle.toList(),
             cpuFreqBigHistory = recordedCpuFreqBig.toList(),
             cpuFreqPrimeHistory = recordedCpuFreqPrime.toList(),
-            batteryPowerHistory = recordedBatteryPower.toList(),
             batteryLevelHistory = recordedBatteryLevel.toList()
         )
     }
@@ -422,23 +451,37 @@ class FpsMonitorManager @Inject constructor(
             rawName.substring("RequestedLayerState{".length, rawName.length - 1)
         } else rawName
         
-        // 1. Strip the leading HEX hash if present (e.g., "132fcce SurfaceView...")
-        // Usually 7-8 chars followed by a space.
         val firstSpace = cleaned.indexOf(' ')
         if (firstSpace != -1 && firstSpace <= 10) {
             val prefix = cleaned.substring(0, firstSpace)
-            // If prefix is alphanumeric and not a known keyword, strip it
             if (prefix.all { it.isLetterOrDigit() }) {
                 cleaned = cleaned.substring(firstSpace + 1).trim()
             }
         }
 
-        // 2. Split by # to get the stable part of the name
         val index = cleaned.indexOf('#')
         return if (index != -1) cleaned.substring(0, index).trim() else null
     }
 
-    private suspend fun getCandidateLayers(packageName: String, preferredPattern: String? = null): List<String> {
+    /** Cached wrapper around raw candidate discovery */
+    private suspend fun getCachedCandidateLayers(
+        packageName: String,
+        preferredPattern: String? = null
+    ): List<String> {
+        val now = System.currentTimeMillis()
+        val entry = layerCache[packageName]
+        if (entry != null && (now - entry.timestamp) < LAYER_CACHE_TTL_MS) {
+            Log.d("FpsMonitor", "Reusing cached candidate layers for $packageName")
+            return entry.candidates
+        }
+        val fresh = getCandidateLayersRaw(packageName, preferredPattern)
+        if (fresh.isNotEmpty()) {
+            layerCache[packageName] = LayerCacheEntry(fresh, now)
+        }
+        return fresh
+    }
+
+    private suspend fun getCandidateLayersRaw(packageName: String, preferredPattern: String? = null): List<String> {
         return try {
             val output = rootRepository.run("dumpsys SurfaceFlinger --list")
             val lines = output.lines().filter { it.isNotBlank() }
@@ -454,13 +497,9 @@ class FpsMonitorManager @Inject constructor(
             val validCandidates = candidateLayers.filter { layer ->
                 excludedKeywords.none { keyword -> layer.contains(keyword, ignoreCase = true) }
             }.sortedWith(
-                // 1. If we have a preferred pattern, put it at the absolute top
                 compareByDescending<String> { preferredPattern != null && it.contains(preferredPattern) }
-                // 2. BLAST is usually the primary renderer on Android 12+
                 .thenByDescending { it.contains("BLAST", ignoreCase = true) }
-                // 3. SurfaceView is standard for games
                 .thenByDescending { it.contains("SurfaceView", ignoreCase = true) }
-                // 4. Layers with # usually have rendering data
                 .thenByDescending { it.contains("#") }
             )
 
@@ -472,19 +511,17 @@ class FpsMonitorManager @Inject constructor(
     }
 
     private suspend fun getActiveLayerName(packageName: String): String? {
-        val candidates = getCandidateLayers(packageName)
+        val candidates = getCachedCandidateLayers(packageName)
         return if (candidates.isNotEmpty()) cleanLayerName(candidates.first()) else null
     }
 
     private fun cleanLayerName(rawName: String): String {
         var name = rawName.trim()
         
-        // Handle "RequestedLayerState{Name#ID parentId=...}"
         if (name.startsWith("RequestedLayerState{") && name.endsWith("}")) {
             name = name.substring("RequestedLayerState{".length, name.length - 1)
         }
         
-        // Extract only the part before spaces (strips parentId, z-order, etc.)
         val metadataKeywords = listOf("parentId=", "relativeParentId=", "z=", "layerStack=")
         var firstMetadataIndex = name.length
         for (keyword in metadataKeywords) {
@@ -524,11 +561,9 @@ class FpsMonitorManager @Inject constructor(
                 return false
             }
 
-            // VRR Compensation: Calculate dynamic refresh rate from SurfaceFlinger's actual refresh period
             val dynamicRefreshRate = 1_000_000_000f / refreshPeriodNs.toFloat()
             val expectedFrameTimeMs = refreshPeriodNs / 1_000_000f
             
-            // Dynamically update base refresh rate if we detect higher (like 90/120Hz)
             if (dynamicRefreshRate > refreshRate && dynamicRefreshRate < 241f) {
                 refreshRate = dynamicRefreshRate
                 Log.d("FpsMonitor", "Updated refresh rate baseline to $refreshRate")
@@ -538,29 +573,24 @@ class FpsMonitorManager @Inject constructor(
             var janks = 0
             var newLastTimestampNs = lastTimestampNs
 
-            // SurfaceFlinger output typically starts with the refresh period, then 128 lines of timestamps
             for (i in 1 until lines.size) {
                 val parts = lines[i].trim().split("\\s+".toRegex())
                 if (parts.size >= 3) {
                     val start = parts[0].toLongOrNull() ?: 0L
                     val end = parts[2].toLongOrNull() ?: 0L
 
-                    // Ignore pending frames (Long.MAX_VALUE) or zero timestamps
                     if (start == 0L || end == 0L || end == Long.MAX_VALUE) continue
                     
-                    // Skip frames already processed in previous poll
                     if (end <= lastTimestampNs) continue
 
-                    // Calculate FPS based on interval between consecutive frames
                     if (lastFrameEndNs != 0L) {
                         val intervalMs = (end - lastFrameEndNs) / 1_000_000f
-                        if (intervalMs > 0 && intervalMs < 500) { // sanity check
+                        if (intervalMs > 0 && intervalMs < 500) {
                             frameIntervals.add(intervalMs)
                             if (isBenchmarking) {
                                 recordedFrameTimes.add(intervalMs)
                             }
                             
-                            // Jank detection based on interval
                             if (intervalMs > expectedFrameTimeMs * 1.5f) {
                                 janks++
                                 if (isBenchmarking) totalJankCount++
