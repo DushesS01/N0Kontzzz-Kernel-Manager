@@ -50,9 +50,17 @@ import id.nkz.nokontzzzmanager.R
 val tuningFeatures = listOf(
     R.string.tuning_feature_performance_mode_title to R.string.tuning_feature_performance_mode_desc,
     R.string.tuning_feature_cpu_governor_title to R.string.tuning_feature_cpu_governor_desc,
+    R.string.tuning_feature_cpu_freq_title to R.string.tuning_feature_cpu_freq_desc,
+    R.string.tuning_feature_core_control_title to R.string.tuning_feature_core_control_desc,
     R.string.tuning_feature_gpu_control_title to R.string.tuning_feature_gpu_control_desc,
     R.string.tuning_feature_thermal_title to R.string.tuning_feature_thermal_desc,
-    R.string.tuning_feature_swappiness_title to R.string.tuning_feature_swappiness_desc
+    R.string.tuning_feature_zram_title to R.string.tuning_feature_zram_desc,
+    R.string.tuning_feature_swappiness_title to R.string.tuning_feature_swappiness_desc,
+    R.string.tuning_feature_dirty_ratio_title to R.string.tuning_feature_dirty_ratio_desc,
+    R.string.tuning_feature_dirty_bg_ratio_title to R.string.tuning_feature_dirty_bg_ratio_desc,
+    R.string.tuning_feature_writeback_title to R.string.tuning_feature_writeback_desc,
+    R.string.tuning_feature_dirty_expire_title to R.string.tuning_feature_dirty_expire_desc,
+    R.string.tuning_feature_min_free_title to R.string.tuning_feature_min_free_desc,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
