@@ -252,7 +252,7 @@ class FpsMonitorManager @Inject constructor(
             Log.e("FpsMonitor", "Error identifying clusters for metricsJob", e)
         }
 
-        while (isActive) {
+        while (coroutineContext.isActive) {
             try {
                 val batteryInfo = systemRepository.getBatteryInfo()
                 
