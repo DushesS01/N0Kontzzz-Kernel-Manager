@@ -541,13 +541,13 @@ class TuningViewModel @Inject constructor(
     private fun fetchDynamicCpuClusters() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Get cluster leaders directly from repository instead of trying to guess/map them
                 val clusters = repo.getClusterLeaders()
-                if (clusters.isNotEmpty()) {
-                    _dynamicCpuClusters.value = clusters
-                } else {
-                    _dynamicCpuClusters.value = cpuClusters
-                }
+                val resolved = if (clusters.isNotEmpty()) clusters else cpuClusters
+                _dynamicCpuClusters.value = resolved
+                // Remove stale pre-seeded entries if dynamic clusters differ from static fallback
+                // ponytail: only needed when device topology differs from Poco F4 fallback
+                val stale = cpuClusters - resolved.toSet()
+                stale.forEach { _currentCpuGovernors.remove(it); _currentCpuFrequencies.remove(it) }
             } catch (e: Exception) {
                 Log.e("TuningViewModel", "Error fetching dynamic CPU clusters", e)
                 _dynamicCpuClusters.value = cpuClusters
