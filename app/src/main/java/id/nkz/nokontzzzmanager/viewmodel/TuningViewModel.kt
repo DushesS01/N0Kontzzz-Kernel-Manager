@@ -320,7 +320,7 @@ class TuningViewModel @Inject constructor(
             val clusters = _dynamicCpuClusters.value
 
             // Allow time for flows to emit initial values
-            delay(200) 
+            // ponytail: delay removed — fetchAllCpuData() populates governors synchronously before returning
             
             // 1. Self-healing for Performance Mode
             if (preferenceManager.isApplyPerformanceModeOnBoot()) {
@@ -434,8 +434,7 @@ class TuningViewModel @Inject constructor(
         withContext(Dispatchers.IO) {
             fetchRamControlData()
             
-            // Allow a small delay for flows to update state
-            delay(150)
+            // ponytail: delay removed — coroutineScope{} above waits for all launches before returning
 
             // Full Self-healing for RAM
             if (preferenceManager.isApplyRamOnBoot()) {
