@@ -309,38 +309,32 @@ class TuningViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadCpuData() {
+     private suspend fun loadCpuData() {
         if (isCpuDataLoaded.getAndSet(true)) return
         Log.d("TuningVM_LazyLoad", "Loading CPU data...")
         withContext(Dispatchers.IO) {
             fetchAllCpuData()
             refreshCoreStates()
-            
-            // Wait for dynamic clusters to be loaded
-            val clusters = _dynamicCpuClusters.value
+            selfHealCpu(_dynamicCpuClusters.value)
+        }
+    }
 
-            // Allow time for flows to emit initial values
-            // ponytail: delay removed — fetchAllCpuData() populates governors synchronously before returning
-            
+    private suspend fun selfHealCpu(clusters: List<String>) {
             // 1. Self-healing for Performance Mode
             if (preferenceManager.isApplyPerformanceModeOnBoot()) {
                 val preferredMode = preferenceManager.getPerformanceMode()
                 val gov0 = _currentCpuGovernors[clusters.first()]?.value
-                
-                // Only act if we have valid governor data
                 if (gov0 != null && gov0 != "...") {
-                    if (preferredMode == "Performance" && gov0 != "performance") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Performance Mode")
+                    val targetGov = when (preferredMode) {
+                        "Performance" -> "performance"
+                        "Powersave"   -> "powersave"
+                        "Balanced"    -> "schedutil"
+                        else          -> null
+                    }
+                    if (targetGov != null && gov0 != targetGov) {
+                        Log.d("TuningVM_SelfHeal", "Re-applying Performance Mode: $preferredMode")
                         onPerformanceModeChange(preferredMode)
-                        return@withContext // Exit to avoid conflict with manual settings below
-                    } else if (preferredMode == "Powersave" && gov0 != "powersave") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Powersave Mode")
-                        onPerformanceModeChange(preferredMode)
-                        return@withContext
-                    } else if (preferredMode == "Balanced" && gov0 != "schedutil") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Balanced Mode")
-                        onPerformanceModeChange(preferredMode)
-                        return@withContext
+                        return // Exit to avoid conflict with manual settings below
                     }
                 }
             }
@@ -396,7 +390,6 @@ class TuningViewModel @Inject constructor(
                 }
                 refreshCoreStates()
             }
-        }
     }
 
     private suspend fun loadGpuData() {
@@ -406,25 +399,25 @@ class TuningViewModel @Inject constructor(
             fetchGpuData()
             fetchOpenGlesDriver()
             fetchVulkanApiVersion()
+            selfHealGpu()
+        }
+    }
 
-            // Self-healing for GPU
-            if (preferenceManager.isApplyGpuOnBoot()) {
-                val prefGov = preferenceManager.getGpuGovernor()
-                if (prefGov != null && _currentGpuGovernor.value != prefGov) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying GPU Governor: $prefGov")
-                    setGpuGovernor(prefGov)
-                }
-
-                val prefMin = preferenceManager.getGpuMinFreq()
-                val prefMax = preferenceManager.getGpuMaxFreq()
-                if ((prefMin != -1 && _currentGpuMinFreq.value != prefMin) || 
-                    (prefMax != -1 && _currentGpuMaxFreq.value != prefMax)) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying GPU Frequencies")
-                    if (prefMin != -1) repo.setGpuMinFreq(prefMin)
-                    if (prefMax != -1) repo.setGpuMaxFreq(prefMax)
-                    fetchGpuData()
-                }
-            }
+    private suspend fun selfHealGpu() {
+        if (!preferenceManager.isApplyGpuOnBoot()) return
+        val prefGov = preferenceManager.getGpuGovernor()
+        if (prefGov != null && _currentGpuGovernor.value != prefGov) {
+            Log.d("TuningVM_SelfHeal", "Re-applying GPU Governor: $prefGov")
+            setGpuGovernor(prefGov)
+        }
+        val prefMin = preferenceManager.getGpuMinFreq()
+        val prefMax = preferenceManager.getGpuMaxFreq()
+        if ((prefMin != -1 && _currentGpuMinFreq.value != prefMin) ||
+            (prefMax != -1 && _currentGpuMaxFreq.value != prefMax)) {
+            Log.d("TuningVM_SelfHeal", "Re-applying GPU Frequencies")
+            if (prefMin != -1) repo.setGpuMinFreq(prefMin)
+            if (prefMax != -1) repo.setGpuMaxFreq(prefMax)
+            fetchGpuData()
         }
     }
 
@@ -433,69 +426,52 @@ class TuningViewModel @Inject constructor(
         Log.d("TuningVM_LazyLoad", "Loading RAM data...")
         withContext(Dispatchers.IO) {
             fetchRamControlData()
-            
-            // ponytail: delay removed — coroutineScope{} above waits for all launches before returning
+            selfHealRam()
+        }
+    }
 
-            // Full Self-healing for RAM
-            if (preferenceManager.isApplyRamOnBoot()) {
-                Log.d("TuningVM_SelfHeal", "Starting RAM Self-healing check")
-                
-                // 1. ZRAM Disksize
-                val prefZramSize = preferenceManager.getZramDisksize()
-                if (prefZramSize != -1L && _zramDisksize.value != prefZramSize) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying ZRAM Size: $prefZramSize")
-                    setZramDisksize(prefZramSize)
-                }
-
-                // 2. Compression Algorithm
-                val prefAlgo = preferenceManager.getZramCompression()
-                if (prefAlgo != null && _currentCompression.value != prefAlgo) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Compression: $prefAlgo")
-                    setCompression(prefAlgo)
-                }
-
-                // 3. Swappiness
-                val prefSwappiness = preferenceManager.getSwappiness()
-                if (prefSwappiness != -1 && _swappiness.value != prefSwappiness) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Swappiness: $prefSwappiness")
-                    setSwappiness(prefSwappiness)
-                }
-
-                // 4. Dirty Ratio
-                val prefDirtyRatio = preferenceManager.getDirtyRatio()
-                if (prefDirtyRatio != -1 && _dirtyRatio.value != prefDirtyRatio) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Ratio: $prefDirtyRatio")
-                    setDirtyRatio(prefDirtyRatio)
-                }
-
-                // 5. Dirty Background Ratio
-                val prefDirtyBg = preferenceManager.getDirtyBackgroundRatio()
-                if (prefDirtyBg != -1 && _dirtyBackgroundRatio.value != prefDirtyBg) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Background Ratio: $prefDirtyBg")
-                    setDirtyBackgroundRatio(prefDirtyBg)
-                }
-
-                // 6. Dirty Writeback
-                val prefWriteback = preferenceManager.getDirtyWriteback()
-                if (prefWriteback != -1 && _dirtyWriteback.value != prefWriteback) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Writeback: $prefWriteback")
-                    setDirtyWriteback(prefWriteback)
-                }
-
-                // 7. Dirty Expire
-                val prefExpire = preferenceManager.getDirtyExpire()
-                if (prefExpire != -1 && _dirtyExpireCentisecs.value != prefExpire) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Expire: $prefExpire")
-                    setDirtyExpireCentisecs(prefExpire)
-                }
-
-                // 8. Min Free Memory
-                val prefMinFree = preferenceManager.getMinFreeMemory()
-                if (prefMinFree != -1 && _minFreeMemory.value != prefMinFree) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Min Free Memory: $prefMinFree")
-                    setMinFreeMemory(prefMinFree)
-                }
-            }
+    private suspend fun selfHealRam() {
+        if (!preferenceManager.isApplyRamOnBoot()) return
+        Log.d("TuningVM_SelfHeal", "Starting RAM Self-healing check")
+        val prefZramSize = preferenceManager.getZramDisksize()
+        if (prefZramSize != -1L && _zramDisksize.value != prefZramSize) {
+            Log.d("TuningVM_SelfHeal", "Re-applying ZRAM Size: $prefZramSize")
+            setZramDisksize(prefZramSize)
+        }
+        val prefAlgo = preferenceManager.getZramCompression()
+        if (prefAlgo != null && _currentCompression.value != prefAlgo) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Compression: $prefAlgo")
+            setCompression(prefAlgo)
+        }
+        val prefSwappiness = preferenceManager.getSwappiness()
+        if (prefSwappiness != -1 && _swappiness.value != prefSwappiness) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Swappiness: $prefSwappiness")
+            setSwappiness(prefSwappiness)
+        }
+        val prefDirtyRatio = preferenceManager.getDirtyRatio()
+        if (prefDirtyRatio != -1 && _dirtyRatio.value != prefDirtyRatio) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Ratio: $prefDirtyRatio")
+            setDirtyRatio(prefDirtyRatio)
+        }
+        val prefDirtyBg = preferenceManager.getDirtyBackgroundRatio()
+        if (prefDirtyBg != -1 && _dirtyBackgroundRatio.value != prefDirtyBg) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Background Ratio: $prefDirtyBg")
+            setDirtyBackgroundRatio(prefDirtyBg)
+        }
+        val prefWriteback = preferenceManager.getDirtyWriteback()
+        if (prefWriteback != -1 && _dirtyWriteback.value != prefWriteback) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Writeback: $prefWriteback")
+            setDirtyWriteback(prefWriteback)
+        }
+        val prefExpire = preferenceManager.getDirtyExpire()
+        if (prefExpire != -1 && _dirtyExpireCentisecs.value != prefExpire) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Expire: $prefExpire")
+            setDirtyExpireCentisecs(prefExpire)
+        }
+        val prefMinFree = preferenceManager.getMinFreeMemory()
+        if (prefMinFree != -1 && _minFreeMemory.value != prefMinFree) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Min Free Memory: $prefMinFree")
+            setMinFreeMemory(prefMinFree)
         }
     }
 
