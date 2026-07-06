@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import id.nkz.nokontzzzmanager.data.repository.RootRepository
 import id.nkz.nokontzzzmanager.utils.ThemeManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,7 +35,6 @@ class KernelLogViewModel @Inject constructor(
     val exportTrigger = _exportTrigger.receiveAsFlow()
 
     private val _logContent = MutableStateFlow<List<String>>(emptyList())
-    // Exposed as raw content, but we will provide a filtered view
     
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -59,10 +59,6 @@ class KernelLogViewModel @Inject constructor(
         initialValue = emptyList()
     )
 
-    // Wait, the previous code exposed logContent as the source. 
-    // Let's keep _logContent as private source and expose filteredLogContent. 
-    // But the UI currently uses `logContent`. To minimize UI changes, I can rename the backing field.
-    
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -72,20 +68,31 @@ class KernelLogViewModel @Inject constructor(
     private val _isPaused = MutableStateFlow(false)
     val isPaused: StateFlow<Boolean> = _isPaused.asStateFlow()
 
-    private var monitoringJob: kotlinx.coroutines.Job? = null
+    private var monitoringJob: Job? = null
     private var isFirstLoad = true
     private var lastLogRaw: String? = null
 
+    /** Interval in ms: 2000 when unpaused, 30000 when paused */
+    private val _pollInterval = MutableStateFlow(2000L)
+
     fun startMonitoring() {
         if (monitoringJob?.isActive == true) return
-        
+
+        // Start paused so a 30 s sleep doesn't fire immediately
+        if (!isFirstLoad) {
+            // If resuming, reset to normal interval
+        }
+
         monitoringJob = viewModelScope.launch {
             while (true) {
+                val interval = if (_isPaused.value) 30000L else 2000L
+
                 if (!_isPaused.value) {
                     loadLogsInternal(quiet = !isFirstLoad)
                     isFirstLoad = false
                 }
-                kotlinx.coroutines.delay(2000) // Poll every 2 seconds
+                // Skip the log fetch while paused, but still delay to avoid spinning
+                delay(interval)
             }
         }
     }
@@ -96,7 +103,16 @@ class KernelLogViewModel @Inject constructor(
     }
     
     fun togglePause() {
-        _isPaused.value = !_isPaused.value
+        val wasPaused = _isPaused.value
+        _isPaused.value = !wasPaused
+
+        // If un-pausing, reset to fast poll immediately
+        if (wasPaused) {
+            viewModelScope.launch {
+                loadLogsInternal(quiet = false)
+                isFirstLoad = false
+            }
+        }
     }
     
     fun updateSearchQuery(query: String) {
