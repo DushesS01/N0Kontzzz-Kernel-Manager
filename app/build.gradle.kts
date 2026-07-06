@@ -37,6 +37,7 @@ configurations.all {
     resolutionStrategy {
         force(libs.guava)
         force(libs.listenablefuture)
+        force(libs.kotlin.metadata.jvm)
     }
     exclude(group = "com.google.guava", module = "listenablefuture")
 }

@@ -29,6 +29,7 @@ mockito-core = "5.23.0"
 robolectric = "4.16.1"
 material3 = "1.5.0-alpha22"
 room = "2.8.4"
+kotlin-metadata-jvm = "2.4.0"
 
 [libraries]
 # Core & App
@@ -77,6 +78,9 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 accompanist-drawablepainter = { group = "com.google.accompanist", name = "accompanist-drawablepainter", version.ref = "accompanist" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 listenablefuture = { group = "com.google.guava", name = "listenablefuture", version.ref = "listenablefuture" }
+
+# Kotlin compiler internals (force version for Hilt compatibility)
+kotlin-metadata-jvm = { group = "org.jetbrains.kotlin", name = "kotlin-metadata-jvm", version.ref = "kotlin-metadata-jvm" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
