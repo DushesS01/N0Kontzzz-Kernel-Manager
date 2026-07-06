@@ -21,7 +21,7 @@
 
 | Setting | Value |
 |---|---|
-| compileSdk | 36 |
+| compileSdk | 37 |
 | minSdk | 31 |
 | targetSdk | 36 |
 | Java | 17 |
