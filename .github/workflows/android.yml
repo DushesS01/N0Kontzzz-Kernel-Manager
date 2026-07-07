@@ -2,9 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "dev/vayu-rebrand" ]
   pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "dev/vayu-rebrand" ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
