@@ -12,7 +12,7 @@
 | Application ID | `id.nkz.nokontzzzmanager` |
 | Version | 2.0.0-beta (versionCode 120) |
 | License | GPL-3.0 |
-| Target hardware | Kona (SM8250) — Poco F4 (munch); extended to other Snapdragon/MediaTek SOCs |
+| Target hardware | Kona (SM8250) — POCO X3 Pro (vayu); extended to other Snapdragon/MediaTek SOCs |
 | Supported kernels | N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, dead-butterflies |
 | Official repo | `bimoalfarrabi/N0Kontzzz-Kernel-Manager` |
 | Origin | Fork of [Xtra Kernel Manager](https://github.com/Gustyx-Power/Xtra-Kernel-Manager) by Gustyx-Power |
@@ -343,10 +343,10 @@ MainActivity.onCreate:
 
 | Type | Framework | Location |
 |---|---|---|
-| Unit | JUnit 4.13.2 | `app/src/test/java/id/xms/xtrakernelmanager/` |
-| Instrumented | AndroidX Test + Mockito + Robolectric | `app/src/androidTest/java/id/xms/xtrakernelmanager/` |
+| Unit | JUnit 4.13.2 | `app/src/test/java/id/nkz/nokontzzzmanager/` |
+| Instrumented | AndroidX Test + Mockito + Robolectric | `app/src/androidTest/java/id/nkz/nokontzzzmanager/` |
 
-> ⚠️ Test packages use `id.xms.xtrakernelmanager` (old package name from Xtra Kernel Manager). Main source uses `id.nkz.nokontzzzmanager`. This mismatch is cosmetic but exists.
+> ⚠️ Test packages have been migrated to `id.nkz.nokontzzzmanager` to match the application ID.
 
 ## Coding Conventions
 
@@ -390,7 +390,7 @@ Routes are hardcoded strings in `MainActivity.kt`. There are 14 of them. If you 
 
 ### 9. Package Name Mismatch
 - Application ID: `id.nkz.nokontzzzmanager`
-- Test packages: `id.xms.xtrakernelmanager` (inherited from XtraKM)
+- Test packages: `id.nkz.nokontzzzmanager` (migrated from XtraKM)
 - Settings project name: `XtraKernelManager`
 
 Don't "fix" this to be consistent unless you're prepared to update the application store listing, signed builds, and test package structure.

@@ -16,7 +16,7 @@
 > **Use this application at your own risk.**
 > This utility performs advanced system-level operations and kernel tuning that may impact device stability, cause data loss, or potentially damage hardware if misconfigured. The developers assume no responsibility for any issues or damages resulting from the use of this software.
 
-**N0Kontzzz Kernel Manager** is an Android root utility for the Poco F4 (munch), built with Kotlin and Jetpack Compose. It gives you real-time hardware telemetry and deep kernel tuning — CPU, GPU, memory, thermal, battery, and more — through a clean Material Design 3 interface.
+**N0Kontzzz Kernel Manager** is an Android root utility specifically optimized for the POCO X3 Pro (vayu), built with Kotlin and Jetpack Compose. It gives you real-time hardware telemetry and deep kernel tuning — CPU, GPU, memory, thermal, battery, and more — through a clean Material Design 3 interface.
 
 ---
 
@@ -115,7 +115,7 @@ Selectively back up or restore System Tuning, Network & Storage, Battery & Charg
 
 ## Requirements
 
-- Kona (SM8250) device running N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, or dead-butterflies kernel
+- Kona (SM8250) / vayu (POCO X3 Pro) device running N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, or dead-butterflies kernel
 - Root access via Magisk or KernelSU
 
 ---
@@ -179,4 +179,4 @@ For questions and community support, join the [Telegram group](https://t.me/n0ko
 - **[Xtra Kernel Manager](https://github.com/Gustyx-Power/Xtra-Kernel-Manager)** — The foundational project for this application.
 - **[Danda](https://github.com/Danda420)** — For significant contributions to development and insights into Android system internals.
 - **[RvKernel Manager](https://github.com/Rve27/RvKernel-Manager)** — Provided inspiration for specific features and implementation references.
-- Poco F4 Community — For ongoing support and feedback.
+- POCO X3 Pro Community — For ongoing support and feedback.
