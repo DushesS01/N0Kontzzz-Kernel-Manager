@@ -10,7 +10,10 @@
 ![Root Required](https://img.shields.io/badge/Root-Required-critical?style=for-the-badge&logo=android)
 [![Repo Size](https://img.shields.io/github/repo-size/bimoalfarrabi/N0Kontzzz-Kernel-Manager?style=for-the-badge&logo=github)](https://github.com/bimoalfarrabi/N0Kontzzz-Kernel-Manager)
 [![Downloads](https://img.shields.io/github/downloads/bimoalfarrabi/N0Kontzzz-Kernel-Manager/total?color=%233DDC84&logo=android&logoColor=%23fff&style=for-the-badge)](https://github.com/bimoalfarrabi/N0Kontzzz-Kernel-Manager/releases)
-[![Telegram](https://img.shields.io/badge/Telegram-Join-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/n0kontzzz)
+
+> [!NOTE]
+> This is a fork of **[bimoalfarrabi/N0Kontzzz-Kernel-Manager](https://github.com/bimoalfarrabi/N0Kontzzz-Kernel-Manager)** for the POCO X3 Pro (vayu).
+> Original project by bimoalfarrabi, adapted for E404R kernel on SM8150.
 
 > [!CAUTION]
 > **Use this application at your own risk.**
@@ -170,8 +173,6 @@ Selectively back up or restore System Tuning, Network & Storage, Battery & Charg
 ## Repository
 
 Issues, feature requests, and pull requests are welcome at [github.com/bimoalfarrabi/N0Kontzzz-Kernel-Manager](https://github.com/bimoalfarrabi/N0Kontzzz-Kernel-Manager).
-
-For questions and community support, join the [Telegram group](https://t.me/n0kontzzz).
 
 ---
 
