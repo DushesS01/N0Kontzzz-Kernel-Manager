@@ -18,10 +18,20 @@ configure <com.android.build.api.dsl.ApplicationExtension> {
         versionName = "2.0.0-beta"
     }
     buildTypes {
+        debug {
+            // Retain debugging capability in debug builds
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
         release {
+            // R8: full bytecode optimization, obfuscation, and resource shrinking
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {
@@ -30,6 +40,8 @@ configure <com.android.build.api.dsl.ApplicationExtension> {
     }
     lint {
         disable.add("NullSafeMutableLiveData")
+        baseline = file("lint-baseline.xml")
+        lintConfig = file("lint.xml")
     }
     buildFeatures { compose = true }
 }

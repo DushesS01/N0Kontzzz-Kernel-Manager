@@ -3,6 +3,7 @@ package id.nkz.nokontzzzmanager.data.repository
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import android.annotation.SuppressLint
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.nkz.nokontzzzmanager.data.model.KernelInfo
 import kotlinx.coroutines.Dispatchers
@@ -164,7 +165,8 @@ class KernelInfoProvider @Inject constructor(
 
                     // Check for KernelSU manager app
                     try {
-                        context.packageManager.getPackageInfo("me.weishu.kernelsu", 0)
+                        @SuppressLint("PackageManagerGetSignatures")
+                        val info = context.packageManager.getPackageInfo("me.weishu.kernelsu", 0)
                         return "Detected (Manager Installed)"
                     } catch (e: Exception) {
                         // Ignore and continue

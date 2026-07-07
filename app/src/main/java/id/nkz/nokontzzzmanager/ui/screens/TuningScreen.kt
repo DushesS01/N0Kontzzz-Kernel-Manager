@@ -31,8 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.activity.ComponentActivity
-import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import id.nkz.nokontzzzmanager.ui.components.IndeterminateExpressiveLoadingIndicator
@@ -67,7 +65,7 @@ val tuningFeatures = listOf(
 @Composable
 fun TuningScreen(
     navController: NavController? = null,
-    viewModel: TuningViewModel = hiltViewModel(LocalContext.current as ComponentActivity)
+    viewModel: TuningViewModel = hiltViewModel()
 ) {
     var showInfoDialog by remember { mutableStateOf(false) }
     val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()

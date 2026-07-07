@@ -195,7 +195,7 @@ class ProcessMonitorViewModel @Inject constructor(
             val psCpu = parts[2].toFloatOrNull() ?: 0f
             val rssKb = parts[3].toFloatOrNull() ?: 0f
             val name = if (parts.size > 4) {
-                parts.subList(4, parts.size).joinToString(" ").split("/").last()
+                parts.subList(4, parts.size).joinToString(" ").split("/").last().substringBefore(" ")
             } else parts.getOrNull(4) ?: "?"
 
             entries.add(PsEntry(pid, user, psCpu, rssKb, name))

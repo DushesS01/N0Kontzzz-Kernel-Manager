@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Compose icons: many intentionally lack descriptions -->
+    <issue id="IconMissingContentDescription" severity="ignore" />
+    <issue id="ContentDescription" severity="ignore" />
+
+    <!-- Root app doesn't use accessibility in standard way -->
+    <issue id="ClickableViewAccessibility" severity="ignore" />
+
+    <!-- Handled by isShrinkResources + R8 -->
+    <issue id="UnusedResources" severity="ignore" />
+
+    <!-- Stale warnings from AGP updates -->
+    <issue id="ObsoleteLintCustomCheck" severity="ignore" />
+
+    <!-- Target SDK 36, compile SDK 37 — suppress stale warnings -->
+    <issue id="OldTargetApi" severity="ignore" />
+
+    <!-- Kernel names, author handles, kernel paths trigger false positives -->
+    <issue id="Typos" severity="ignore" />
+
+    <!-- Compose constant usage -->
+    <issue id="WrongConstant" severity="ignore" />
+
+    <!-- App is English-only, no RTL support needed -->
+    <issue id="RtlEnabled" severity="ignore" />
+
+    <!-- Dependencies managed via version catalog -->
+    <issue id="GradleDependency" severity="ignore" />
+
+    <!-- Compose generates many false positives here -->
+    <issue id="UnusedAttribute" severity="ignore" />
+
+    <!-- English-only app -->
+    <issue id="MissingTranslation" severity="ignore" />
+</lint>

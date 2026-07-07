@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.DialogProperties
 import android.widget.Toast
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -456,7 +457,9 @@ fun SettingsScreen(
         ) {
             val pInfo = remember(context) {
                 try {
-                    context.packageManager.getPackageInfo(context.packageName, 0)
+                    @SuppressLint("PackageManagerGetSignatures")
+                    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                    info
                 } catch (e: Exception) {
                     null
                 }
