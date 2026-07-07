@@ -10,7 +10,7 @@
 | App name | N0Kontzzz Kernel Manager (NKM) |
 | Root project name | `XtraKernelManager` (see `settings.gradle.kts`) |
 | Application ID | `id.nkz.nokontzzzmanager` |
-| Version | 1.7.0 (versionCode 106) |
+| Version | 2.0.0-beta (versionCode 120) |
 | License | GPL-3.0 |
 | Target hardware | Kona (SM8250) — Poco F4 (munch); extended to other Snapdragon/MediaTek SOCs |
 | Supported kernels | N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, dead-butterflies |
@@ -59,7 +59,7 @@
 |---|---|---|
 | Language | Kotlin | 2.4.0 |
 | UI | Jetpack Compose + Material 3 Expressive | BOM 2026.06.00, Material3 1.5.0-alpha22 |
-| DI | Dagger Hilt | 2.59.2 |
+| DI | Dagger Hilt | 2.60 |
 | Navigation | Compose Navigation | 2.9.8 |
 | Lifecycle | AndroidX Lifecycle | 2.11.0 |
 | Database | Room | 2.8.4 |
