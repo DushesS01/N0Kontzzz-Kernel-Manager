@@ -1,20 +1,33 @@
 package id.nkz.nokontzzzmanager.di
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.room.Room
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import id.nkz.nokontzzzmanager.data.database.AppProfileDao
+import id.nkz.nokontzzzmanager.data.database.BatteryGraphDao
+import id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase
+import id.nkz.nokontzzzmanager.data.database.BenchmarkDao
+import id.nkz.nokontzzzmanager.data.database.CustomTunableDao
+import id.nkz.nokontzzzmanager.data.database.GameDao
+import id.nkz.nokontzzzmanager.data.repository.BatteryMonitorProvider
+import id.nkz.nokontzzzmanager.data.repository.CpuMonitorProvider
+import id.nkz.nokontzzzmanager.data.repository.KernelFeatureRepository
+import id.nkz.nokontzzzmanager.data.repository.KernelInfoProvider
+import id.nkz.nokontzzzmanager.data.repository.MemoryMonitorProvider
 import id.nkz.nokontzzzmanager.data.repository.RootRepository
+import id.nkz.nokontzzzmanager.data.repository.SysfsHelper
 import id.nkz.nokontzzzmanager.data.repository.SystemRepository
+import id.nkz.nokontzzzmanager.data.repository.ThermalRepository
 import id.nkz.nokontzzzmanager.data.repository.TuningRepository
 import javax.inject.Singleton
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.preferencesDataStoreFile
-import id.nkz.nokontzzzmanager.data.repository.ThermalRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -38,12 +51,18 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideRootRepository(): RootRepository = RootRepository()
-
-    @Provides
-    @Singleton
-    fun provideSystemRepository(@ApplicationContext context: Context, tuningRepository: TuningRepository, rootRepository: RootRepository): SystemRepository =
-        SystemRepository(context, tuningRepository, rootRepository)
+    fun provideSystemRepository(
+        @ApplicationContext context: Context,
+        tuningRepository: TuningRepository,
+        rootRepository: RootRepository,
+        sysfsHelper: SysfsHelper,
+        kernelFeatures: KernelFeatureRepository,
+        cpuMonitor: CpuMonitorProvider,
+        batteryMonitor: BatteryMonitorProvider,
+        memoryMonitor: MemoryMonitorProvider,
+        kernelInfoProvider: KernelInfoProvider,
+    ): SystemRepository =
+        SystemRepository(context, tuningRepository, rootRepository, sysfsHelper, kernelFeatures, cpuMonitor, batteryMonitor, memoryMonitor, kernelInfoProvider)
 
     @Provides
     @Singleton
@@ -60,76 +79,23 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideBatteryHistoryDatabase(@ApplicationContext context: Context): id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase {
-        return androidx.room.Room.databaseBuilder(
-            context,
-            id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase::class.java,
-            "battery_history_db"
-        )
-        .fallbackToDestructiveMigration(true)
-        .build()
-    }
+    fun provideBatteryHistoryDatabase(@ApplicationContext context: Context): BatteryHistoryDatabase =
+        Room.databaseBuilder(context, BatteryHistoryDatabase::class.java, "battery_history_db")
+            .addMigrations(BatteryHistoryDatabase.MIGRATION_14_15)
+            .build()
 
-    @Provides
-    @Singleton
-    fun provideBatteryGraphDao(database: id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase): id.nkz.nokontzzzmanager.data.database.BatteryGraphDao {
-        return database.batteryGraphDao()
-    }
+    @Provides @Singleton
+    fun provideBatteryGraphDao(db: BatteryHistoryDatabase): BatteryGraphDao = db.batteryGraphDao()
 
-    @Provides
-    @Singleton
-    fun provideBatteryGraphRepository(dao: id.nkz.nokontzzzmanager.data.database.BatteryGraphDao): id.nkz.nokontzzzmanager.data.repository.BatteryGraphRepository {
-        return id.nkz.nokontzzzmanager.data.repository.BatteryGraphRepository(dao)
-    }
+    @Provides @Singleton
+    fun provideAppProfileDao(db: BatteryHistoryDatabase): AppProfileDao = db.appProfileDao()
 
-    @Provides
-    @Singleton
-    fun provideAppProfileDao(database: id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase): id.nkz.nokontzzzmanager.data.database.AppProfileDao {
-        return database.appProfileDao()
-    }
+    @Provides @Singleton
+    fun provideCustomTunableDao(db: BatteryHistoryDatabase): CustomTunableDao = db.customTunableDao()
 
-    @Provides
-    @Singleton
-    fun provideAppProfileRepository(dao: id.nkz.nokontzzzmanager.data.database.AppProfileDao): id.nkz.nokontzzzmanager.data.repository.AppProfileRepository {
-        return id.nkz.nokontzzzmanager.data.repository.AppProfileRepository(dao)
-    }
+    @Provides @Singleton
+    fun provideGameDao(db: BatteryHistoryDatabase): GameDao = db.gameDao()
 
-    @Provides
-    @Singleton
-    fun provideCustomTunableDao(database: id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase): id.nkz.nokontzzzmanager.data.database.CustomTunableDao {
-        return database.customTunableDao()
-    }
-
-    @Provides
-    @Singleton
-    fun provideCustomTunableRepository(
-        dao: id.nkz.nokontzzzmanager.data.database.CustomTunableDao,
-        rootRepository: RootRepository
-    ): id.nkz.nokontzzzmanager.data.repository.CustomTunableRepository {
-        return id.nkz.nokontzzzmanager.data.repository.CustomTunableRepository(dao, rootRepository)
-    }
-
-    @Provides
-    @Singleton
-    fun provideGameDao(database: id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase): id.nkz.nokontzzzmanager.data.database.GameDao {
-        return database.gameDao()
-    }
-
-    @Provides
-    @Singleton
-    fun provideGameRepository(dao: id.nkz.nokontzzzmanager.data.database.GameDao): id.nkz.nokontzzzmanager.data.repository.GameRepository {
-        return id.nkz.nokontzzzmanager.data.repository.GameRepository(dao)
-    }
-
-    @Provides
-    @Singleton
-    fun provideBenchmarkDao(database: id.nkz.nokontzzzmanager.data.database.BatteryHistoryDatabase): id.nkz.nokontzzzmanager.data.database.BenchmarkDao {
-        return database.benchmarkDao()
-    }
-
-    @Provides
-    @Singleton
-    fun provideBenchmarkRepository(dao: id.nkz.nokontzzzmanager.data.database.BenchmarkDao): id.nkz.nokontzzzmanager.data.repository.BenchmarkRepository {
-        return id.nkz.nokontzzzmanager.data.repository.BenchmarkRepository(dao)
-    }
+    @Provides @Singleton
+    fun provideBenchmarkDao(db: BatteryHistoryDatabase): BenchmarkDao = db.benchmarkDao()
 }

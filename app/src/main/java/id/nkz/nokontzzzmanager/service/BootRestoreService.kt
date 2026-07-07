@@ -123,7 +123,8 @@ class BootRestoreService : Service() {
 
         // 3. Background Blocker
         if (preferenceManager.isApplyBgBlockerOnBoot()) {
-            val blocklist = preferenceManager.getBgBlocklist() ?: "com.shopee.id,com.lazada.android,com.tokopedia.tkpd"
+            val prefBlocklist = preferenceManager.getBgBlocklist()
+            val blocklist = prefBlocklist ?: "com.shopee.id,com.lazada.android,com.tokopedia.tkpd"
             // Use systemRepository directly to find correct path and write with root
             systemRepository.setBgBlocklist(blocklist)
         }

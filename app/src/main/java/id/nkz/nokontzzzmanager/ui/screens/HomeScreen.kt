@@ -42,7 +42,7 @@ import id.nkz.nokontzzzmanager.ui.components.BatteryCard
 import id.nkz.nokontzzzmanager.ui.components.DeviceInfoCard
 import id.nkz.nokontzzzmanager.ui.components.MemoryCard
 import id.nkz.nokontzzzmanager.ui.components.StorageCard
-import id.nkz.nokontzzzmanager.ui.viewmodel.StorageInfoViewModel
+import id.nkz.nokontzzzmanager.viewmodel.StorageInfoViewModel
 import id.nkz.nokontzzzmanager.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 

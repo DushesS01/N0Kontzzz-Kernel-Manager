@@ -48,12 +48,22 @@ import javax.microedition.khronos.egl.EGLContext
 import javax.microedition.khronos.opengles.GL10
 
 
-@Suppress("UNREACHABLE_CODE")
+// ponytail: Feature toggles extracted to KernelFeatureRepository (KGSL, Dirty PTE, Bypass,
+// Fast Charge, BG Blocker, TCP, GPU Throttling, I/O Scheduler). CPU/Battery/GPU/Memory/Kernel
+// monitoring still live here — tightly coupled via getCachedSystemInfo() and realtimeAggregatedInfoFlow.
+// Extract monitoring sections when a clean boundary emerges.
+
 @Singleton
 class SystemRepository @Inject constructor(
     private val context: Context,
     private val tuningRepository: TuningRepository,
     private val rootRepository: RootRepository,
+    private val sysfsHelper: SysfsHelper,
+    private val kernelFeatures: KernelFeatureRepository,
+    private val cpuMonitor: CpuMonitorProvider,
+    private val batteryMonitor: BatteryMonitorProvider,
+    private val memoryMonitor: MemoryMonitorProvider,
+    private val kernelInfoProvider: KernelInfoProvider,
 ) {
 
     companion object {
@@ -80,465 +90,26 @@ class SystemRepository @Inject constructor(
     }
 
     private suspend fun readFileToString(filePath: String, fileDescription: String, attemptSu: Boolean = true, useRetry: Boolean = true): String? {
-        val file = File(filePath)
-        try {
-            if (file.exists() && file.canRead()) {
-                val content = file.readText().trim()
-                if (content.isNotBlank()) {
-                    return content
-                } else if (!attemptSu) {
-                    return null
-                }
-            }
-        } catch (_: SecurityException) {
-        } catch (_: FileNotFoundException) {
-        } catch (_: IOException) {
-            return null
-        } catch (_: Exception) {
-            return null
-        }
-
-        if (attemptSu) {
-            try {
-                // Use the root repository for more reliable command execution
-                val result = rootRepository.run("cat \"$filePath\"", useRetry = useRetry)
-                if (result.isNotBlank()) {
-                    return result.trim()
-                }
-            } catch (_: Exception) {
-                return null
-            }
-        }
-        return null
+        return sysfsHelper.readFileToString(filePath, fileDescription, attemptSu, useRetry)
     }
 
     private suspend fun writeStringToFile(filePath: String, content: String, fileDescription: String, attemptSu: Boolean = true): Boolean {
-        val file = File(filePath)
-        try {
-            if (file.exists() && file.canWrite()) {
-                file.writeText(content)
-                return true
-            } else if (!attemptSu) {
-                return false
-            }
-        } catch (_: SecurityException) {
-        } catch (_: FileNotFoundException) {
-        } catch (_: IOException) {
-            return false
-        } catch (_: Exception) {
-            return false
-        }
-
-        if (attemptSu) {
-            try {
-                // Use the root repository for more reliable command execution
-                rootRepository.run("echo -n \"$content\" > \"$filePath\"")
-                return true
-            } catch (_: Exception) {
-                return false
-            }
-        }
-        return false
+        return sysfsHelper.writeStringToFile(filePath, content, fileDescription, attemptSu)
     }
 
-    // Variabel untuk menyimpan data CPU sebelumnya untuk perhitungan load
-    private var previousCpuData: List<LongArray>? = null
+    // CPU realtime — delegated to CpuMonitorProvider
 
-    private suspend fun getCpuRealtimeInternal(): RealtimeCpuInfo {
-        val cores = Runtime.getRuntime().availableProcessors()
-        val governor = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "CPU0 Governor") ?: VALUE_UNKNOWN
+    fun getCpuRealtime(): RealtimeCpuInfo = cpuMonitor.getCpuRealtime()
 
-        val frequencies = List(cores) { coreIndex ->
-            val onlineStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/online", "CPU$coreIndex Online Status", attemptSu = false)
-            val isOnline = onlineStr == null || onlineStr.trim() != "0"
+    suspend fun getCpuClusters(): List<CpuCluster> = cpuMonitor.getCpuClusters()
 
-            if (isOnline) {
-                val freqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_cur_freq", "CPU$coreIndex Current Freq")
-                (freqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0
-            } else {
-                0
-            }
-        }
+    // Battery + Deep Sleep — delegated to BatteryMonitorProvider
+    fun getBatteryInfo(): BatteryInfo = batteryMonitor.getBatteryInfo()
+    fun getDeepSleepInfo(): DeepSleepInfo = batteryMonitor.getDeepSleepInfo()
+    fun getAwakeTime(): Long = batteryMonitor.getAwakeTime()
 
-        val tempStr = readFileToString("/sys/class/thermal/thermal_zone0/temp", "Thermal Zone0 Temp")
-        val temperature = (tempStr?.toFloatOrNull()?.div(1000)) ?: 0f // Asumsi temp dalam mili-Celsius
-
-        // Menghitung CPU load percentage
-        val cpuLoadPercentage = calculateCpuLoadPercentage()
-
-        val systemInfo = getCachedSystemInfo() // Dapatkan info SoC
-
-        return RealtimeCpuInfo(
-            cores = cores,
-            governor = governor,
-            freqs = frequencies,
-            temp = temperature,
-            soc = systemInfo.soc, // Menambahkan kembali socModel
-            cpuLoadPercentage = cpuLoadPercentage
-        )
-    }
-
-    private suspend fun calculateCpuLoadPercentage(): Float? {
-        try {
-            // Membaca data CPU dari /proc/stat
-            val cpuStat = readFileToString("/proc/stat", "CPU Stat")?.lines()?.firstOrNull { it.startsWith("cpu ") }
-            if (cpuStat == null) {
-                return null
-            }
-
-            // Parsing data CPU
-            val cpuData = cpuStat.trim().split("\\s+".toRegex()).drop(1).map { it.toLong() }.toLongArray()
-            if (cpuData.size < 4) {
-                return null
-            }
-
-            // Jika ini adalah pembacaan pertama, simpan data dan kembalikan null
-            val previousData = previousCpuData
-            if (previousData == null) {
-                previousCpuData = listOf(cpuData)
-                return null
-            }
-
-            // Menghitung perbedaan antara data saat ini dan sebelumnya
-            val prevData = previousData.first()
-            val diffData = LongArray(cpuData.size) { i -> cpuData[i] - prevData[i] }
-
-            // Menghitung total waktu dan waktu idle
-            val total = diffData.sum()
-            val idle = diffData[3] + (if (diffData.size > 4) diffData[4] else 0) // idle + iowait
-
-            // Menghitung persentase penggunaan CPU
-            val usage = if (total > 0) ((total - idle).toDouble() / total.toDouble() * 100.0) else 0.0
-            
-            // Simpan data saat ini untuk perhitungan berikutnya
-            previousCpuData = listOf(cpuData)
-
-            return usage.toFloat().coerceIn(0f, 100f)
-        } catch (_: Exception) {
-            return null
-        }
-    }
-
-    fun getCpuRealtime(): RealtimeCpuInfo {
-        return runBlocking { getCpuRealtimeInternal() }
-    }
-
-    private fun getBatteryLevelFromApi(): Int {
-        val intentFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val batteryStatusIntent =
-            context.applicationContext.registerReceiver(null, intentFilter) ?: return -1
-        val level = batteryStatusIntent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-        val scale = batteryStatusIntent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-        return if (level != -1 && scale != -1 && scale != 0) {
-            (level / scale.toFloat() * 100).toInt()
-        } else -1
-    }
-
-    private suspend fun getBatteryInfoInternal(statusFromIntent: Int = -1): BatteryInfo {
-        val batteryDir = "/sys/class/power_supply/battery"
-        val batteryLevelStr = readFileToString("$batteryDir/capacity", "Battery Level Percent from File")
-        val finalLevel = batteryLevelStr?.toIntOrNull() ?: getBatteryLevelFromApi().let { if (it == -1) 0 else it }
-
-        var tempStr = readFileToString("$batteryDir/temp", "Battery Temperature")
-        var tempSource = "$batteryDir/temp"
-        if (tempStr == null) {
-            val thermalZoneDirs = File("/sys/class/thermal/").listFiles { dir, name ->
-                dir.isDirectory && name.startsWith("thermal_zone")
-            }
-            thermalZoneDirs?.sortedBy { it.name }?.forEach thermalLoop@{ zoneDir ->
-                val type = readFileToString("${zoneDir.path}/type", "Thermal Zone Type (${zoneDir.name})", attemptSu = false)
-                if (type != null && (type.contains("battery", ignoreCase = true) || type.contains("แบตเตอรี่") || type.contains("case_therm", ignoreCase = true) || type.contains("ibat_therm", ignoreCase = true))) {
-                    tempStr = readFileToString("${zoneDir.path}/temp", "Battery Temperature from ${zoneDir.name} ($type)")
-                    if (tempStr != null) {
-                        tempSource = "${zoneDir.path}/temp (type: $type)"
-                        return@thermalLoop
-                    }
-                }
-            }
-        }
-        val finalTemperature = tempStr?.toFloatOrNull()?.let { rawTemp ->
-            // Jika dari thermal_zone, biasanya dalam mili-Celsius, jika dari power_supply, bisa deci-Celsius
-            if (rawTemp > 1000 && (tempSource.contains("thermal_zone") || tempSource.contains("temp_input"))) rawTemp / 1000 else rawTemp / 10
-        } ?: 0f
-
-        val cycleCountStr = readFileToString("$batteryDir/cycle_count", "Battery Cycle Count")
-        val finalCycleCount = cycleCountStr?.toIntOrNull() ?: run {
-            // Try alternative paths for cycle count
-            val altCyclePaths = listOf(
-                "/sys/class/power_supply/bms/cycle_count",
-                "/sys/class/power_supply/battery/cycle_count_summary",
-                "/proc/driver/battery_cycle",
-                "/proc/battinfo"
-            )
-
-            for (altPath in altCyclePaths) {
-                val altCycleStr = readFileToString(altPath, "Alternative Battery Cycle Count ($altPath)")
-                val cycles = altCycleStr?.toIntOrNull()
-                if (cycles != null && cycles > 0) {
-                    return@run cycles
-                }
-            }
-            0 // Default if no cycle count found
-        }
-
-        // Try multiple paths for battery capacity information
-        val designCapacityUahStr = readFileToString("$batteryDir/charge_full_design", "Battery Design Capacity (uAh)")
-        val designCapacityUah = designCapacityUahStr?.toLongOrNull() ?: run {
-            // Try alternative paths for design capacity
-            val altCapacityPaths = listOf(
-                "/sys/class/power_supply/bms/charge_full_design",
-                "/sys/class/power_supply/battery/energy_full_design",
-                "/proc/driver/battery_capacity"
-            )
-
-            for (altPath in altCapacityPaths) {
-                val altCapStr = readFileToString(altPath, "Alternative Battery Design Capacity ($altPath)")
-                val cap = altCapStr?.toLongOrNull()
-                if (cap != null && cap > 0) {
-                    return@run cap
-                }
-            }
-            null
-        }
-
-        val finalDesignCapacityMah = if (designCapacityUah != null && designCapacityUah > 0) {
-            // Convert microAh to mAh, handle different units
-            when {
-                designCapacityUah > 10000000 -> (designCapacityUah / 1000).toInt() // µAh to mAh
-                designCapacityUah > 10000 -> (designCapacityUah / 1000).toInt() // µAh to mAh
-                else -> designCapacityUah.toInt() // Already in mAh
-            }
-        } else 0
-
-        var calculatedSohPercentage = 0
-        var currentCapacityMah = 0
-
-        if (finalDesignCapacityMah > 0 && designCapacityUah != null) {
-            val currentFullUahStr = readFileToString("$batteryDir/charge_full", "Battery Current Full Capacity (uAh)")
-            val currentFullUah = currentFullUahStr?.toLongOrNull() ?: run {
-                // Try alternative paths for current capacity
-                val altCurrentCapPaths = listOf(
-                    "/sys/class/power_supply/bms/charge_full",
-                    "/sys/class/power_supply/battery/energy_full",
-                    "/proc/driver/battery_current_capacity"
-                )
-
-                for (altPath in altCurrentCapPaths) {
-                    val altCapStr = readFileToString(altPath, "Alternative Battery Current Capacity ($altPath)")
-                    val cap = altCapStr?.toLongOrNull()
-                    if (cap != null && cap > 0) {
-                        return@run cap
-                    }
-                }
-                null
-            }
-
-            if (currentFullUah != null && currentFullUah > 0) {
-                // Convert microAh to mAh, handle different units
-                currentCapacityMah = when {
-                    currentFullUah > 10000000 -> (currentFullUah / 1000).toInt() // µAh to mAh
-                    currentFullUah > 10000 -> (currentFullUah / 1000).toInt() // µAh to mAh
-                    else -> currentFullUah.toInt() // Already in mAh
-                }
-
-                // Calculate real battery health percentage: (Current Capacity / Design Capacity) × 100%
-                val sohDouble = (currentCapacityMah.toDouble() / finalDesignCapacityMah.toDouble()) * 100.0
-                calculatedSohPercentage = sohDouble.toInt().coerceIn(0, 100)
-
-            } else {
-                // If we can't read current capacity, try to get health directly from system
-                val healthPercentageStr = readFileToString("$batteryDir/health", "Direct Battery Health")
-                calculatedSohPercentage = healthPercentageStr?.toIntOrNull()?.coerceIn(0, 100) ?: run {
-                    // As last resort, try to estimate from BatteryManager health status
-                    val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                    val health = batteryIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN) ?: BatteryManager.BATTERY_HEALTH_UNKNOWN
-
-                    when (health) {
-                        BatteryManager.BATTERY_HEALTH_GOOD -> 100
-                        BatteryManager.BATTERY_HEALTH_OVERHEAT -> 85
-                        BatteryManager.BATTERY_HEALTH_COLD -> 90
-                        BatteryManager.BATTERY_HEALTH_DEAD -> 0
-                        BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> 75
-                        BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> 50
-                        else -> 100 // Default to 100% for unknown
-                    }
-                }
-                currentCapacityMah = (finalDesignCapacityMah * calculatedSohPercentage / 100.0).toInt()
-            }
-        } else {
-            // If no design capacity is available, try to get approximate values
-
-            // Try to get some capacity info from BatteryManager properties
-            val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-            val energyCounter = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
-
-            if (energyCounter != Int.MIN_VALUE && energyCounter > 0) {
-                // Energy counter is in nWh, convert to approximate mAh
-                // Assuming average voltage of 3.7V: mAh ≈ nWh / (3.7 * 1000000)
-                val estimatedCapacityMah = (energyCounter / (3.7 * 1000000)).toInt()
-                if (estimatedCapacityMah > 0) {
-                    currentCapacityMah = estimatedCapacityMah
-                    // Assume this is 100% health since we don't have design capacity
-                    calculatedSohPercentage = 100
-                }
-            }
-        }
-
-        // Determine health status string based on percentage
-        val healthStatus = when {
-            calculatedSohPercentage >= 90 -> "Excellent"
-            calculatedSohPercentage >= 80 -> "Good"
-            calculatedSohPercentage >= 70 -> "Fair"
-            calculatedSohPercentage >= 60 -> "Poor"
-            calculatedSohPercentage > 0 -> "Critical"
-            else -> "Unknown"
-        }
-
-        val voltagePaths = listOf(
-            "$batteryDir/voltage_now",
-            "$batteryDir/batt_vol",
-            "$batteryDir/batt_voltage",
-            "$batteryDir/battery_voltage",
-            "/sys/class/power_supply/battery/voltage_now",
-            "/sys/class/power_supply/bms/voltage_now",
-            "/sys/class/power_supply/main/voltage_now",
-            "/sys/class/power_supply/pm8921-bms/voltage_now"
-        )
-        var finalVoltage: Float? = null
-        for (path in voltagePaths) {
-            val voltageStr = readFileToString(path, "Battery Voltage from $path")
-            if (voltageStr.isNullOrBlank()) continue
-
-            val cleanedVoltage = buildString {
-                for (ch in voltageStr) {
-                    if (ch.isDigit() || ch == '.' || ch == '-') append(ch)
-                }
-            }
-
-            val voltageValue = cleanedVoltage.toFloatOrNull()
-            if (voltageValue != null && voltageValue > 0f) {
-                finalVoltage = voltageValue
-                break
-            }
-        }
-
-        var finalCurrent: Float? = null
-        val currentPaths = listOf(
-            "$batteryDir/current_now",
-            "$batteryDir/current_avg",
-            "/sys/class/power_supply/bms/current_now",
-            "/sys/class/power_supply/usb/current_now"
-        )
-        for (path in currentPaths) {
-            val currentStr = readFileToString(path, "Battery Current from $path")
-            if (currentStr != null) {
-                finalCurrent = currentStr.toFloatOrNull()
-                // Some kernels add extra characters, so let's be safe
-                if (finalCurrent != null) {
-                    break // Found a valid value, stop searching
-                }
-            }
-        }
-
-        // Prefer derived wattage from voltage/current; avoid rooting for power_now as banyak device tidak menyediakan
-        val finalWattage = if (finalVoltage != null && finalCurrent != null) {
-            // voltage_now commonly µV, current in µA; normalisasi ke W
-            val v = if (finalVoltage > 10_000) finalVoltage / 1_000_000f else finalVoltage / 1_000_000f
-            val i = finalCurrent / 1_000_000f
-            (kotlin.math.abs(v * i))
-        } else {
-            val finalWattageStr = readFileToString("$batteryDir/power_now", "Battery Power Now", attemptSu = false)
-            finalWattageStr?.toFloatOrNull()
-        }
-
-        val finalTechnology = readFileToString("$batteryDir/technology", "Battery Technology")
-
-        val statusString = readFileToString("$batteryDir/status", "Battery Status")
-
-        // Determine charging status
-        val isCharging = when {
-            // Prioritize the status from the broadcast intent if it's valid and not unknown
-            statusFromIntent != -1 && statusFromIntent != BatteryManager.BATTERY_STATUS_UNKNOWN -> {
-                statusFromIntent == BatteryManager.BATTERY_STATUS_CHARGING || statusFromIntent == BatteryManager.BATTERY_STATUS_FULL
-            }
-            // Then fall back to the file-based logic
-            finalCurrent != null -> {
-                finalCurrent < -1000f // Negative current means charging
-            }
-            else -> {
-                statusString?.contains("Charging", ignoreCase = true) == true ||
-                statusString?.contains("Full", ignoreCase = true) == true
-            }
-        }
-
-        val finalStatus = when {
-            statusString.isNullOrBlank() -> ""
-            statusString.contains("Charging", ignoreCase = true) -> "Charging"
-            statusString.contains("Discharging", ignoreCase = true) -> "Discharging"
-            statusString.contains("Full", ignoreCase = true) -> "Full"
-            else -> statusString
-        }
-
-        // Normalize current for display: positive for charging, negative for discharging
-        val displayCurrent = finalCurrent?.let {
-            val absCurrent = kotlin.math.abs(it)
-            if (isCharging) absCurrent else -absCurrent
-        } ?: 0f
-
-        return BatteryInfo(
-            level = finalLevel,
-            temp = finalTemperature,
-            voltage = finalVoltage ?: 0f,
-            isCharging = isCharging,
-            current = displayCurrent,
-            chargingWattage = finalWattage ?: 0f,
-            technology = finalTechnology ?: "Unknown",
-            health = healthStatus, // Use the calculated health status
-            status = finalStatus,
-            chargingType = getChargingTypeFromStatus(statusString),
-            powerSource = getChargingTypeFromStatus(statusString),
-            healthPercentage = calculatedSohPercentage,
-            cycleCount = finalCycleCount, // Use the actual cycle count
-            capacity = finalDesignCapacityMah, // Use the actual design capacity
-            currentCapacity = currentCapacityMah, // Use the actual current capacity
-            plugged = 0,
-            isBypassActive = getBypassCharging()
-        )
-    }
-
-    fun getBatteryInfo(): BatteryInfo {
-        return runBlocking { getBatteryInfoInternal() }
-    }
-
-    private suspend fun getMemoryInfoInternal(): MemoryInfo {
-        return try {
-            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            val memoryInfo = android.app.ActivityManager.MemoryInfo()
-            activityManager.getMemoryInfo(memoryInfo)
-
-            // Fetch ZRAM and Swap details from TuningRepository
-            val zramTotal = tuningRepository.getZramDisksize().firstOrNull() ?: 0L
-            val zramUsed = tuningRepository.getZramUsed().firstOrNull() ?: 0L
-            val swapTotal = tuningRepository.getSwapTotal().firstOrNull() ?: 0L
-            val swapUsed = tuningRepository.getSwapUsed().firstOrNull() ?: 0L
-
-            MemoryInfo(
-                used = memoryInfo.totalMem - memoryInfo.availMem,
-                total = memoryInfo.totalMem,
-                free = memoryInfo.availMem,
-                zramTotal = zramTotal,
-                zramUsed = zramUsed,
-                swapTotal = swapTotal,
-                swapUsed = swapUsed
-            )
-        } catch (e: Exception) {
-            MemoryInfo(0, 0, 0)
-        }
-    }
-
-    fun getMemoryInfo(): MemoryInfo {
-        return runBlocking { getMemoryInfoInternal() }
-    }
+    // Memory — delegated to MemoryMonitorProvider
+    fun getMemoryInfo(): MemoryInfo = memoryMonitor.getMemoryInfo()
 
     private suspend fun getGpuModel(): String {
         return try {
@@ -595,7 +166,8 @@ class SystemRepository @Inject constructor(
     private var cachedGlVersion: String? = null
 
     private fun getDetailedGlVersion(): String {
-        if (cachedGlVersion != null && cachedGlVersion!!.isNotEmpty()) return cachedGlVersion!!
+        val cached = cachedGlVersion
+        if (cached != null && cached.isNotEmpty()) return cached
 
         // 1. Try basic ActivityManager first as fallback
         var version = try {
@@ -707,39 +279,6 @@ class SystemRepository @Inject constructor(
     
     fun getGpuRealtime(): RealtimeGpuInfo {
         return runBlocking { getGpuRealtimeInternal() }
-    }
-
-    private fun getUptimeMillisInternal(): Long {
-        return android.os.SystemClock.elapsedRealtime()
-    }
-
-    private fun getDeepSleepMillisInternal(): Long {
-        val uptime = android.os.SystemClock.elapsedRealtime()
-        val awakeTime = android.os.SystemClock.uptimeMillis()
-        return uptime - awakeTime
-    }
-
-    @SuppressLint("DefaultLocale")
-    private fun formatDuration(millis: Long): String {
-        val totalSeconds = millis / 1000
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-        return if (hours > 0) {
-            String.format("%02d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%02d:%02d", minutes, seconds)
-        }
-    }
-    fun getDeepSleepInfo(): DeepSleepInfo {
-        return DeepSleepInfo(getUptimeMillisInternal(), getDeepSleepMillisInternal())
-    }
-    
-    // Helper function to get awake time (approximation of screen on time)
-    fun getAwakeTime(): Long {
-        // uptimeMillis returns the time since boot that the CPU has been awake (not in deep sleep)
-        // This includes screen on time and other awake periods
-        return android.os.SystemClock.uptimeMillis()
     }
 
     private fun getSystemInfoInternal(): SystemInfo {
@@ -896,16 +435,6 @@ class SystemRepository @Inject constructor(
 
 
 
-    private fun getChargingTypeFromStatus(statusString: String?): String {
-        return when {
-            statusString.isNullOrBlank() -> "Unknown"
-            statusString.contains("Charging", ignoreCase = true) -> "Charging"
-            statusString.contains("Full", ignoreCase = true) -> "Not Charging"
-            statusString.contains("Discharging", ignoreCase = true) -> "Not Charging"
-            else -> "Unknown"
-        }
-    }
-
     fun getSystemInfo(): SystemInfo {
         return runBlocking { getCachedSystemInfo() }
     }
@@ -914,701 +443,48 @@ class SystemRepository @Inject constructor(
         return readFileToString("/proc/sys/kernel/random/boot_id", "Boot ID")
     }
 
-    suspend fun getKernelInfo(): KernelInfo {
+    suspend fun getKernelInfo(): KernelInfo = kernelInfoProvider.getKernelInfo()
+
+    // KGSL — delegated to KernelFeatureRepository
+    suspend fun getKgslSkipZeroing(): Boolean = kernelFeatures.getKgslSkipZeroing()
+    suspend fun setKgslSkipZeroing(enabled: Boolean): Boolean = kernelFeatures.setKgslSkipZeroing(enabled)
+    suspend fun isKgslFeatureAvailable(): Boolean = kernelFeatures.isKgslFeatureAvailable()
+    fun parseKgslSkipZeroingValue(value: String?): Boolean = kernelFeatures.parseKgslSkipZeroingValue(value)
+
+    // Avoid Dirty PTE — delegated to KernelFeatureRepository
+    suspend fun isAvoidDirtyPteAvailable(): Boolean = kernelFeatures.isAvoidDirtyPteAvailable()
+    suspend fun getAvoidDirtyPte(): Boolean = kernelFeatures.getAvoidDirtyPte()
+    suspend fun setAvoidDirtyPte(enabled: Boolean): Boolean = kernelFeatures.setAvoidDirtyPte(enabled)
+
+    // Bypass Charging — delegated to KernelFeatureRepository
+    suspend fun isBypassChargingAvailable(): Boolean = kernelFeatures.isBypassChargingAvailable()
+    suspend fun getBypassCharging(): Boolean = kernelFeatures.getBypassCharging()
+    suspend fun setBypassCharging(enabled: Boolean): Boolean = kernelFeatures.setBypassCharging(enabled)
+
+    // USB Fast Charge — delegated to KernelFeatureRepository
+    suspend fun isForceFastChargeAvailable(): Boolean = kernelFeatures.isForceFastChargeAvailable()
+    suspend fun getForceFastCharge(): Boolean = kernelFeatures.getForceFastCharge()
+    suspend fun setForceFastCharge(enabled: Boolean): Boolean = kernelFeatures.setForceFastCharge(enabled)
+
+    // Background App Blocker — delegated to KernelFeatureRepository
+    suspend fun isBgBlockerAvailable(): Boolean = kernelFeatures.isBgBlockerAvailable()
+    suspend fun getBgBlocklist(): String = kernelFeatures.getBgBlocklist()
+    suspend fun setBgBlocklist(blocklist: String): Boolean = kernelFeatures.setBgBlocklist(blocklist)
+
+    // TCP Congestion — delegated to KernelFeatureRepository
+    suspend fun getTcpCongestionAlgorithm(): String = kernelFeatures.getTcpCongestionAlgorithm()
+    suspend fun setTcpCongestionAlgorithm(algorithm: String): Boolean = kernelFeatures.setTcpCongestionAlgorithm(algorithm)
+    suspend fun getAvailableTcpCongestionAlgorithmsList(): List<String> = kernelFeatures.getAvailableTcpCongestionAlgorithmsList()
+
+    // GPU Throttling — delegated to KernelFeatureRepository
+    suspend fun isGpuThrottlingEnabled(): Boolean = kernelFeatures.isGpuThrottlingEnabled()
+    suspend fun setGpuThrottling(enabled: Boolean): Boolean = kernelFeatures.setGpuThrottling(enabled)
+
+    // I/O Scheduler — delegated to KernelFeatureRepository
+    suspend fun getIoScheduler(): String = kernelFeatures.getIoScheduler()
+    suspend fun setIoScheduler(scheduler: String): Boolean = kernelFeatures.setIoScheduler(scheduler)
+    suspend fun getAvailableIoSchedulersList(): List<String> = kernelFeatures.getAvailableIoSchedulersList()
 
-        // Get kernel version
-        val version = readFileToString("/proc/version", "Kernel Version")
-            ?: Build.VERSION.RELEASE
-
-        // Improved GKI type detection with version-based detection
-        val gkiType = when {
-            // Check for specific GKI patterns first (more specific)
-            version.contains("gki", ignoreCase = true) ||
-            version.contains("generic kernel image", ignoreCase = true) ||
-            Build.VERSION.RELEASE.contains("gki", ignoreCase = true) -> "Generic Kernel Image (GKI)"
-
-            // Check for Android Common Kernel patterns
-            version.contains("android-mainline", ignoreCase = true) ||
-            version.contains("android-common", ignoreCase = true) -> "Android Common Kernel (ACK)"
-
-            // GKI version detection based on Linux kernel version
-            version.contains("Linux version", ignoreCase = true) -> {
-                // Extract kernel version number
-                val versionRegex = """Linux version (\d+\.\d+)""".toRegex()
-                val kernelVersionMatch = versionRegex.find(version)
-                val kernelVersion = kernelVersionMatch?.groupValues?.get(1)?.toFloatOrNull()
-
-                when {
-                    kernelVersion != null && kernelVersion >= 6.6f -> "Generic Kernel Image (GKI 2.0)"
-                    kernelVersion != null && kernelVersion >= 5.15f -> "Generic Kernel Image (GKI 2.0)"
-                    kernelVersion != null && kernelVersion >= 5.10f -> "Generic Kernel Image (GKI 2.0)"
-                    kernelVersion != null && kernelVersion >= 5.4f -> "Generic Kernel Image (GKI 1.0)"
-                    kernelVersion != null && kernelVersion == 4.19f -> "Non GKI"
-                    version.contains("android", ignoreCase = true) -> "Android Kernel"
-                    else -> "Linux Kernel $kernelVersion"
-                }
-            }
-
-            // Check build fingerprint for additional clues
-            Build.FINGERPRINT.contains("gki", ignoreCase = true) -> "Generic Kernel Image (GKI)"
-
-            // Fallback check for android (less specific) - moved to lower priority
-            version.contains("android", ignoreCase = true) -> "Android Kernel"
-
-            else -> "Custom/OEM Kernel"
-        }
-
-        // Get scheduler information with better fallback paths
-        var scheduler = readFileToString("/sys/block/sda/queue/scheduler", "I/O Scheduler")
-            ?.let { schedulerLine ->
-                // Extract currently active scheduler (marked with brackets)
-                val activeSchedulerRegex = """\[([^]]+)]""".toRegex()
-                activeSchedulerRegex.find(schedulerLine)?.groupValues?.get(1) ?: schedulerLine.trim()
-            }
-
-        if (scheduler == null) {
-            // Try alternative block devices
-            val alternativeDevices = listOf("mmcblk0", "nvme0n1", "sdb", "sdc")
-            for (device in alternativeDevices) {
-                val altScheduler = readFileToString("/sys/block/$device/queue/scheduler", "I/O Scheduler ($device)")
-                if (altScheduler != null) {
-                    val activeSchedulerRegex = """\[([^]]+)]""".toRegex()
-                    scheduler = activeSchedulerRegex.find(altScheduler)?.groupValues?.get(1) ?: altScheduler.trim()
-                    if (scheduler.isNotBlank()) break
-                }
-            }
-        }
-        if (scheduler.isNullOrBlank()) scheduler = "Unknown"
-
-        // Get SELinux status
-        var selinuxStatus = readFileToString("/sys/fs/selinux/enforce", "SELinux Status")
-            ?.let { enforceValue ->
-                when (enforceValue.trim()) {
-                    "1" -> "Enforcing"
-                    "0" -> "Permissive"
-                    else -> "Unknown"
-                }
-            }
-
-        if (selinuxStatus == null) {
-            // Fallback: try getenforce command
-            selinuxStatus = try {
-                withContext(Dispatchers.IO) {
-                    val process = Runtime.getRuntime().exec("getenforce")
-                    val result = BufferedReader(InputStreamReader(process.inputStream)).readLine()?.trim()
-                    process.waitFor()
-                    process.destroy()
-                    result ?: "Unknown"
-                }
-            } catch (e: Exception) {
-                "Unknown"
-            }
-        }
-
-        // Get ABI
-        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown"
-
-        // Get architecture
-        val architecture = when {
-            abi.contains("arm64") || abi.contains("aarch64") -> "ARM64"
-            abi.contains("arm") -> "ARM"
-            abi.contains("x86_64") -> "x86_64"
-            abi.contains("x86") -> "x86"
-            else -> abi
-        }
-
-        // Get WireGuard Version
-        val wireguardVersion = readFileToString("/sys/module/wireguard/version", "WireGuard Version")
-
-        // Enhanced KernelSU detection - improved with better logging and error handling
-        val kernelSuStatus = when {
-            // Method 1: Check kernel version for KernelSU signature (primary method)
-            version.contains("KernelSU", ignoreCase = true) -> {
-                // Extract KernelSU version if available
-                val ksuVersionRegex = """KernelSU[ -]?v?(\d+\.\d+\.\d+)""".toRegex()
-                val ksuMatch = ksuVersionRegex.find(version)
-                if (ksuMatch != null) {
-                    "Active (${ksuMatch.groupValues[1]})"
-                } else {
-                    "Active"
-                }
-            }
-
-            // Method 2: Check KernelSU directory
-            File("/data/adb/ksu").exists() -> "Active"
-
-            // Method 3: Check for KernelSU binary
-            File("/system/bin/ksu").exists() -> "Active"
-
-            // Method 4: Try various detection methods
-            else -> {
-                // Helper function for additional KernelSU checks
-                suspend fun checkOtherKsuMethods(): String {
-                    // Check kernel cmdline
-                    val cmdline = readFileToString("/proc/cmdline", "Kernel Command Line")
-                    if (cmdline?.contains("ksu", ignoreCase = true) == true) {
-                        return "Active"
-                    }
-
-                    // Check for KernelSU manager app
-                    try {
-                        context.packageManager.getPackageInfo("me.weishu.kernelsu", 0)
-                        return "Detected (Manager Installed)"
-                    } catch (e: Exception) {
-                        // Ignore and continue
-                    }
-
-                    // Check system properties
-                    if (getSystemProperty("ro.kernel.su")?.isNotEmpty() == true) {
-                        return "Active"
-                    }
-
-                    // Default case - not detected
-                    return "Not Detected"
-                }
-
-                // Helper: cek keberadaan binary di PATH atau path absolut
-                fun binaryExists(cmd: String): Boolean {
-                    return try {
-                        if (cmd.contains("/")) {
-                            File(cmd).exists()
-                        } else {
-                            val common = listOf("/system/bin/$cmd", "/system/xbin/$cmd", "/vendor/bin/$cmd")
-                            if (common.any { File(it).exists() }) return true
-                            
-                            // For simplicity in this context, we'll stick to a more direct check or assume false if not in common paths
-                            false
-                        }
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
-
-                // Enhanced function to execute KernelSU commands dengan error handling lebih aman
-                suspend fun executeKsuCommand(command: Array<String>, description: String): String? {
-                    return withContext(Dispatchers.IO) {
-                        var process: Process? = null
-                        try {
-                            // Hindari IOException: No such file or directory saat binary tidak ada
-                            if (command.isNotEmpty()) {
-                                val bin = command[0]
-                                val notFound = when {
-                                    bin == "ksu" -> !binaryExists("ksu")
-                                    bin.startsWith("/") -> !File(bin).exists()
-                                    else -> false
-                                }
-                                if (notFound) {
-                                    return@withContext null
-                                }
-                            }
-
-                            process = Runtime.getRuntime().exec(command)
-                            val reader = BufferedReader(InputStreamReader(process.inputStream))
-                            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
-
-                            val output = StringBuilder()
-                            val errorOutput = StringBuilder()
-                            var line: String?
-
-                            // Read output
-                            while (reader.readLine().also { line = it } != null) {
-                                output.append(line).append("\n")
-                            }
-
-                            // Read error stream
-                            while (errorReader.readLine().also { line = it } != null) {
-                                errorOutput.append(line).append("\n")
-                            }
-
-                            val exitCode = process.waitFor()
-
-                            if (errorOutput.isNotEmpty()) {
-                                Log.w("SystemRepository", "KSU Command Error: $errorOutput")
-                            }
-
-                            reader.close()
-                            errorReader.close()
-
-                            if (exitCode == 0) {
-                                val result = output.toString().trim()
-                                return@withContext result.ifBlank { null }
-                            }
-
-                        } catch (e: Exception) {
-                            // Jangan spam stacktrace untuk ENOENT; cukup log ringkas
-                        } finally {
-                            process?.destroy()
-                        }
-                        null
-                    }
-                }
-
-                // Try ksu -V command first
-                val ksuVOutput = executeKsuCommand(arrayOf("ksu", "-V"), "ksu -V")
-                if (ksuVOutput != null) {
-                    "Active ($ksuVOutput)"
-                } else {
-                    // Try su -c "ksu -V" command
-                    val suKsuVOutput = executeKsuCommand(arrayOf("su", "-c", "ksu -V"), "su -c ksu -V")
-                    if (suKsuVOutput != null) {
-                        "Active ($suKsuVOutput)"
-                    } else {
-                        // Try /data/adb/ksud --version command
-                        val ksudOutput = executeKsuCommand(arrayOf("su", "-c", "/data/adb/ksud --version"), "su -c /data/adb/ksud --version")
-                        if (ksudOutput != null) {
-                            "Active ($ksudOutput)"
-                        } else {
-                            // Try alternative ksud paths
-                            val alternativeKsudPaths = listOf(
-                                "/data/adb/ksud version",
-                                "/data/adb/ksu/bin/ksud --version",
-                                "/data/adb/modules/kernelsu/bin/ksud --version"
-                            )
-
-                            var foundOutput: String? = null
-                            for (ksudPath in alternativeKsudPaths) {
-                                val altOutput = executeKsuCommand(arrayOf("su", "-c", ksudPath), "su -c $ksudPath")
-                                if (altOutput != null) {
-                                    foundOutput = altOutput
-                                    break
-                                }
-                            }
-
-                            if (foundOutput != null) {
-                                "Active ($foundOutput)"
-                            } else {
-                                // Check if we can find ksud binary directly
-                                val ksudPaths = listOf(
-                                    "/data/adb/ksud",
-                                    "/data/adb/ksu/bin/ksud",
-                                    "/data/adb/modules/kernelsu/bin/ksud"
-                                )
-
-                                var binaryFound = false
-                                for (ksudPath in ksudPaths) {
-                                    if (File(ksudPath).exists()) {
-                                        binaryFound = true
-                                        break
-                                    }
-                                }
-
-                                if (binaryFound) {
-                                    "Active (Binary Found)"
-                                } else {
-                                    // Final fallback checks
-                                    checkOtherKsuMethods()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return KernelInfo(
-            version = version,
-            gkiType = gkiType,
-            scheduler = scheduler,
-            selinuxStatus = selinuxStatus,
-            abi = abi,
-            architecture = architecture,
-            kernelSuStatus = kernelSuStatus,
-            fingerprint = Build.FINGERPRINT,
-            wireguardVersion = wireguardVersion
-        )
-    }
-
-    // Helper function to determine which KGSL path is available
-    private suspend fun getAvailableKgslPath(): String? {
-        // 1. Fast check: Standard file access
-        for (path in KernelPaths.KGSL_SKIP_ZEROING) {
-            try {
-                val file = File(path)
-                if (file.exists()) return path
-            } catch (_: Exception) {
-                // Continue to check the next path
-            }
-        }
-        
-        // 2. Slow check: Root access (if file exists but not visible/readable to app user)
-        for (path in KernelPaths.KGSL_SKIP_ZEROING) {
-            try {
-                // attemptSu = true is default
-                if (readFileToString(path, "KGSL Skip Pool Zeroing Check") != null) {
-                    return path
-                }
-            } catch (_: Exception) {
-                // Continue to check the next path
-            }
-        }
-        
-        return null
-    }
-
-    suspend fun getKgslSkipZeroing(): Boolean {
-        val path = getAvailableKgslPath()
-        if (path != null) {
-            val value = readFileToString(path, "KGSL Skip Pool Zeroing")
-            return parseKgslSkipZeroingValue(value)
-        }
-        return false
-    }
-
-    suspend fun setKgslSkipZeroing(enabled: Boolean): Boolean {
-        val path = getAvailableKgslPath()
-        if (path != null) {
-            val value = if (enabled) "1" else "0"
-            val success = writeStringToFile(path, value, "KGSL Skip Pool Zeroing")
-            if (success) {
-                val actualValue = readFileToString(path, "KGSL Verification")
-                return parseKgslSkipZeroingValue(actualValue) == enabled
-            }
-        }
-        return false
-    }
-
-    suspend fun isKgslFeatureAvailable(): Boolean {
-        return getAvailableKgslPath() != null
-    }
-
-    // Helper function for testing
-    fun parseKgslSkipZeroingValue(value: String?): Boolean {
-        return value?.toIntOrNull() == 1
-    }
-
-    private suspend fun getAvailableAvoidDirtyPtePath(): String? {
-        for (path in KernelPaths.AVOID_DIRTY_PTE) {
-            if (File(path).exists()) return path
-        }
-        for (path in KernelPaths.AVOID_DIRTY_PTE) {
-            if (readFileToString(path, "Avoid Dirty PTE Check", false) != null) return path
-        }
-        return null
-    }
-
-    suspend fun isAvoidDirtyPteAvailable(): Boolean {
-        return getAvailableAvoidDirtyPtePath() != null
-    }
-
-    suspend fun getAvoidDirtyPte(): Boolean {
-        val path = getAvailableAvoidDirtyPtePath()
-        if (path != null) {
-            val value = readFileToString(path, "Avoid Dirty PTE Status")
-            return value?.trim() == "1"
-        }
-        return false
-    }
-
-    suspend fun setAvoidDirtyPte(enabled: Boolean): Boolean {
-        val path = getAvailableAvoidDirtyPtePath()
-        if (path != null) {
-            val value = if (enabled) "1" else "0"
-            // Use generic robust write approach
-            try {
-                // Ensure writable
-                rootRepository.run("chmod 666 $path")
-                // Write
-                rootRepository.run("echo -n \"$value\" > \"$path\"")
-                // Restore/Lock permissions (read-only to prevent reset)
-                rootRepository.run("chmod 444 $path")
-                return true
-            } catch (e: Exception) {
-                // Fallback to basic writeStringToFile if root/complex commands fail
-                return writeStringToFile(path, value, "Avoid Dirty PTE")
-            }
-        }
-        return false
-    }
-
-    suspend fun isBypassChargingAvailable(): Boolean {
-        val file = File(KernelPaths.BYPASS_CHARGING)
-        if (file.exists()) {
-            return true
-        }
-        // If the file doesn't exist directly, try reading it with root.
-        // readFileToString will return null if the file doesn't exist even with root.
-        return readFileToString(KernelPaths.BYPASS_CHARGING, "Bypass Charging Status Check") != null
-    }
-
-    suspend fun getBypassCharging(): Boolean {
-        val value = readFileToString(KernelPaths.BYPASS_CHARGING, "Bypass Charging Status")
-        return value?.trim() == "1"
-    }
-
-    suspend fun setBypassCharging(enabled: Boolean): Boolean {
-        val value = if (enabled) "1" else "0"
-        val success = writeStringToFile(KernelPaths.BYPASS_CHARGING, value, "Bypass Charging")
-        if (success) {
-            // Verify if the value was actually applied
-            val actualValue = readFileToString(KernelPaths.BYPASS_CHARGING, "Bypass Charging Verification")
-            return actualValue?.trim() == value
-        }
-        return false
-    }
-
-    suspend fun isForceFastChargeAvailable(): Boolean {
-        val file = File(KernelPaths.FORCE_FAST_CHARGE)
-        if (file.exists()) {
-            return true
-        }
-        return readFileToString(KernelPaths.FORCE_FAST_CHARGE, "USB Fast Charge Check") != null
-    }
-
-    suspend fun getForceFastCharge(): Boolean {
-        val value = readFileToString(KernelPaths.FORCE_FAST_CHARGE, "USB Fast Charge Status")
-        return value?.trim() == "1"
-    }
-
-    suspend fun setForceFastCharge(enabled: Boolean): Boolean {
-        val value = if (enabled) "1" else "0"
-        return writeStringToFile(KernelPaths.FORCE_FAST_CHARGE, value, "USB Fast Charge")
-    }
-
-    // Background App Blocker functions
-    private suspend fun getAvailableBgBlocklistPath(): String? {
-        for (path in KernelPaths.BG_BLOCKLIST) {
-            if (File(path).exists()) return path
-        }
-        for (path in KernelPaths.BG_BLOCKLIST) {
-            if (readFileToString(path, "Background Blocker Check", true) != null) return path
-        }
-        return null
-    }
-
-    suspend fun isBgBlockerAvailable(): Boolean {
-        return getAvailableBgBlocklistPath() != null
-    }
-
-    suspend fun getBgBlocklist(): String {
-        val path = getAvailableBgBlocklistPath()
-        if (path != null) {
-            return readFileToString(path, "Background Blocker List") ?: ""
-        }
-        return ""
-    }
-
-    suspend fun setBgBlocklist(blocklist: String): Boolean {
-        val path = getAvailableBgBlocklistPath()
-        if (path != null) {
-            return writeStringToFile(path, blocklist, "Background Blocker List")
-        }
-        return false
-    }
-
-    // TCP Congestion Control Algorithm functions
-
-    private suspend fun getCurrentTcpCongestionAlgorithm(): String? {
-        return readFileToString("/proc/sys/net/ipv4/tcp_congestion_control", "TCP Congestion Control Algorithm")
-    }
-
-    private suspend fun getAvailableTcpCongestionAlgorithms(): List<String> {
-        val available = readFileToString("/proc/sys/net/ipv4/tcp_available_congestion_control", "Available TCP Congestion Control Algorithms")
-        // Notice: here we use a regular space, and not double-escaped
-        return available?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-    }
-
-    suspend fun getTcpCongestionAlgorithm(): String {
-        return getCurrentTcpCongestionAlgorithm() ?: "Unknown"
-    }
-
-    suspend fun setTcpCongestionAlgorithm(algorithm: String): Boolean {
-        // First check if the algorithm is available
-        val availableAlgorithms = getAvailableTcpCongestionAlgorithms()
-        if (!availableAlgorithms.contains(algorithm)) {
-            return false
-        }
-
-        return writeStringToFile("/proc/sys/net/ipv4/tcp_congestion_control", algorithm, "TCP Congestion Control Algorithm")
-    }
-
-    suspend fun getAvailableTcpCongestionAlgorithmsList(): List<String> {
-        return getAvailableTcpCongestionAlgorithms()
-    }
-
-    // GPU Throttling functions
-    private fun getGpuThrottlingPath(): String? {
-        return KernelPaths.GPU_THROTTLING.find { File(it).exists() }
-    }
-
-    private suspend fun getGpuThrottlingStatus(): Boolean? {
-        val path = getGpuThrottlingPath() ?: return null
-        val result = readFileToString(path, "GPU Throttling Status")
-        return when (result?.trim()) {
-            "1", "Y", "yes", "on", "enabled" -> true
-            "0", "N", "no", "off", "disabled" -> false
-            else -> null
-        }
-    }
-
-    suspend fun isGpuThrottlingEnabled(): Boolean {
-        return getGpuThrottlingStatus() ?: false
-    }
-
-    suspend fun setGpuThrottling(enabled: Boolean): Boolean {
-        val path = getGpuThrottlingPath() ?: return false
-        val value = if (enabled) "1" else "0"
-        return writeStringToFile(path, value, "GPU Throttling")
-    }
-
-    // I/O Scheduler functions
-    private suspend fun getCurrentIoScheduler(): String {
-        // Try multiple possible paths for different devices
-        val paths = listOf(
-            "/sys/block/sda/queue/scheduler",  // Common path
-            "/sys/block/mmcblk0/queue/scheduler",  // Alternative for some devices
-            "/sys/block/sdb/queue/scheduler",  // USB storage
-            "/sys/block/nvme0n1/queue/scheduler"  // NVMe storage
-        )
-        
-        for (path in paths) {
-            val result = readFileToString(path, "I/O Scheduler from $path")
-            if (result != null) {
-                // Find the active scheduler (the one in brackets [scheduler])
-                val activeMatch = Regex("""\[(\w+)]""").find(result)
-                return activeMatch?.groupValues?.get(1) ?: "N/A"
-            }
-        }
-        return "N/A"
-    }
-
-    private suspend fun getAvailableIoSchedulers(): List<String> {
-        // Try multiple possible paths for different devices
-        val paths = listOf(
-            "/sys/block/sda/queue/scheduler",
-            "/sys/block/mmcblk0/queue/scheduler",
-            "/sys/block/sdb/queue/scheduler",
-            "/sys/block/nvme0n1/queue/scheduler"
-        )
-        
-        for (path in paths) {
-            val result = readFileToString(path, "Available I/O Schedulers from $path")
-            if (result != null) {
-                // Extract all schedulers, removing brackets from the active one
-                val schedulers = Regex("""\[(\w+)]|(\w+)""")
-                    .findAll(result)
-                    .map { matchResult ->
-                        val active = matchResult.groupValues[1]
-                        val inactive = matchResult.groupValues[2]
-                        active.ifEmpty { inactive }
-                    }
-                    .filter { it.isNotEmpty() }
-                    .toList()
-                return schedulers
-            }
-        }
-        return emptyList()
-    }
-
-    suspend fun getIoScheduler(): String {
-        return getCurrentIoScheduler()
-    }
-
-    suspend fun setIoScheduler(scheduler: String): Boolean {
-        // First, verify that the scheduler is available
-        val availableSchedulers = getAvailableIoSchedulers()
-        if (!availableSchedulers.contains(scheduler)) {
-            return false
-        }
-        
-        // Try multiple possible paths for different devices
-        val paths = listOf(
-            "/sys/block/sda/queue/scheduler",
-            "/sys/block/mmcblk0/queue/scheduler", 
-            "/sys/block/sdb/queue/scheduler",
-            "/sys/block/nvme0n1/queue/scheduler"
-        )
-        
-        for (path in paths) {
-            // Verify the path exists and is writable
-            val testResult = readFileToString(path, "Testing I/O Scheduler Path $path")
-            if (testResult != null) {
-                return writeStringToFile(path, scheduler, "I/O Scheduler Setting")
-            }
-        }
-        
-        return false
-    }
-
-    suspend fun getAvailableIoSchedulersList(): List<String> {
-        return getAvailableIoSchedulers()
-    }
-
-    suspend fun getCpuClusters(): List<CpuCluster> {
-
-        val clusters = mutableListOf<CpuCluster>()
-        val cores = Runtime.getRuntime().availableProcessors()
-
-        // Group cores by their frequency ranges to identify clusters
-        val coreFreqRanges = mutableMapOf<Int, Pair<Int, Int>>() // core -> (min, max)
-        val coreGovernors = mutableMapOf<Int, String>() // core -> governor
-        val coreAvailableGovernors = mutableMapOf<Int, List<String>>() // core -> available governors
-
-        for (coreIndex in 0 until cores) {
-            val minFreqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/cpuinfo_min_freq", "CPU$coreIndex Min Freq")
-            val maxFreqStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/cpuinfo_max_freq", "CPU$coreIndex Max Freq")
-            val governor = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_governor", "CPU$coreIndex Governor")
-            val availableGovernorsStr = readFileToString("/sys/devices/system/cpu/cpu$coreIndex/cpufreq/scaling_available_governors", "CPU$coreIndex Available Governors")
-
-            val minFreq = (minFreqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0 // Convert kHz to MHz
-            val maxFreq = (maxFreqStr?.toLongOrNull()?.div(1000))?.toInt() ?: 0 // Convert kHz to MHz
-
-            if (minFreq > 0 && maxFreq > 0) {
-                coreFreqRanges[coreIndex] = Pair(minFreq, maxFreq)
-                coreGovernors[coreIndex] = governor ?: "Unknown"
-                coreAvailableGovernors[coreIndex] = availableGovernorsStr?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-            }
-        }
-
-        // Group cores with similar frequency ranges into clusters
-        val frequencyGroups = coreFreqRanges.values.distinct().sortedBy { it.second } // Sort by max frequency
-
-        frequencyGroups.forEachIndexed { index, (minFreq, maxFreq) ->
-            val coresInCluster = coreFreqRanges.filter { it.value == Pair(minFreq, maxFreq) }.keys
-
-            if (coresInCluster.isNotEmpty()) {
-                val representativeCore = coresInCluster.first()
-                val clusterName = when (index) {
-                    0 -> "Little Cluster" // Lowest frequency cluster
-                    frequencyGroups.size - 1 -> "Prime Cluster" // Highest frequency cluster
-                    else -> "Big Cluster"
-                }
-
-                val governor = coreGovernors[representativeCore] ?: "Unknown"
-                val availableGovernors = coreAvailableGovernors[representativeCore] ?: emptyList()
-
-                clusters.add(
-                    CpuCluster(
-                        name = clusterName,
-                        minFreq = minFreq,
-                        maxFreq = maxFreq,
-                        governor = governor,
-                        availableGovernors = availableGovernors
-                    )
-                )
-            }
-        }
-
-        // If no clusters found (fallback), create a single cluster
-        if (clusters.isEmpty()) {
-            val fallbackGovernor = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "CPU0 Governor") ?: "Unknown"
-            val fallbackAvailableGovernors = readFileToString("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors", "CPU0 Available Governors")
-                ?.split("\\s+".toRegex())?.filter { it.isNotBlank() } ?: emptyList()
-
-            clusters.add(
-                CpuCluster(
-                    name = "CPU Cluster",
-                    minFreq = 0,
-                    maxFreq = 0,
-                    governor = fallbackGovernor,
-                    availableGovernors = fallbackAvailableGovernors
-                )
-            )
-        }
-
-        return clusters
-    }
-
-        @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
     val realtimeAggregatedInfoFlow: Flow<RealtimeAggregatedInfo> = callbackFlow {
 
         val lastState = java.util.concurrent.atomic.AtomicReference<RealtimeAggregatedInfo>(null)
@@ -1616,12 +492,12 @@ class SystemRepository @Inject constructor(
         // Initial full data fetch
         launch(Dispatchers.IO) {
             val initialData = RealtimeAggregatedInfo(
-                cpuInfo = getCpuRealtimeInternal(),
+                cpuInfo = cpuMonitor.getCpuRealtimeSuspend(),
                 gpuInfo = getGpuRealtimeInternal(),
-                batteryInfo = getBatteryInfoInternal(),
-                memoryInfo = getMemoryInfoInternal(),
-                uptimeMillis = getUptimeMillisInternal(),
-                deepSleepMillis = getDeepSleepMillisInternal()
+                batteryInfo = batteryMonitor.getBatteryInfoSuspend(),
+                memoryInfo = memoryMonitor.getMemoryInfoSuspend(),
+                uptimeMillis = batteryMonitor.getUptimeMillis(),
+                deepSleepMillis = batteryMonitor.getDeepSleepMillis()
             )
             lastState.set(initialData)
             trySend(initialData)
@@ -1635,7 +511,7 @@ class SystemRepository @Inject constructor(
                     val currentState = lastState.get()
                     if (currentState != null) {
                         launch(Dispatchers.IO) {
-                            val newBatteryInfo = getBatteryInfoInternal(status)
+                            val newBatteryInfo = batteryMonitor.getBatteryInfoSuspend(status)
                             val newState = currentState.copy(batteryInfo = newBatteryInfo)
                             lastState.set(newState)
                             trySend(newState)
@@ -1653,11 +529,11 @@ class SystemRepository @Inject constructor(
                 val currentState = lastState.get()
                 if (currentState != null) {
                     // Fetch non-battery stats
-                    val newCpuInfo = getCpuRealtimeInternal()
+                    val newCpuInfo = cpuMonitor.getCpuRealtimeSuspend()
                     val newGpuInfo = getGpuRealtimeInternal()
-                    val newMemoryInfo = getMemoryInfoInternal()
-                    val newUptime = getUptimeMillisInternal()
-                    val newDeepSleep = getDeepSleepMillisInternal()
+                    val newMemoryInfo = memoryMonitor.getMemoryInfoSuspend()
+                    val newUptime = batteryMonitor.getUptimeMillis()
+                    val newDeepSleep = batteryMonitor.getDeepSleepMillis()
 
                     // Create new state by copying the last one and updating polled values
                     val newState = currentState.copy(

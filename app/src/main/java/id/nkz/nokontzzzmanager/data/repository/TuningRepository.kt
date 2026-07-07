@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -94,20 +95,9 @@ class TuningRepository @Inject constructor(
         return allSuccess
     }
 
-    private fun runTuningCommand(cmd: String): Boolean {
-        val originalSelinuxMode = getSelinuxModeInternal()
-        val needsSelinuxChange = originalSelinuxMode.equals("Enforcing", ignoreCase = true)
-
-        if (needsSelinuxChange) {
-            setSelinuxModeInternal(false)
-        }
-
-        val success = executeShellCommand(cmd)
-        if (needsSelinuxChange) {
-            setSelinuxModeInternal(true)
-        }
-        return success
-    }
+    // ponytail: single-command writes go through batch to avoid 3× SELinux shell round-trips
+    private fun runTuningCommand(cmd: String): Boolean =
+        runBlocking { runBatchTuning(listOf(cmd)) }
     private fun executeShellCommand(cmd: String): Boolean {
         if (isSuShellWorking) {
             try {
@@ -126,11 +116,6 @@ class TuningRepository @Inject constructor(
             return executeShellCommandFallback(cmd)
         }
     }
-    private fun runShellCommand(cmd: String): Boolean {
-        return runTuningCommand(cmd)
-    }
-
-
     private fun readShellCommand(cmd: String): String {
         if (isSuShellWorking) {
             try {

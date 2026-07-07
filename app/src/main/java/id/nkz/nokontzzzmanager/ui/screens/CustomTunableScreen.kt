@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import id.nkz.nokontzzzmanager.ui.dialog.RootFilePickerDialog
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -103,11 +104,9 @@ fun CustomTunableScreen(
                 editingTunable = null
             },
             onSave = { path, value, applyOnBoot ->
-                if (editingTunable != null) {
-                     viewModel.updateTunable(editingTunable!!.path, CustomTunableEntity(path, value, applyOnBoot))
-                } else {
-                     viewModel.addTunable(path, value, applyOnBoot)
-                }
+                editingTunable?.let { tunable ->
+                    viewModel.updateTunable(tunable.path, CustomTunableEntity(path, value, applyOnBoot))
+                } ?: viewModel.addTunable(path, value, applyOnBoot)
                 showAddDialog = false
                 editingTunable = null
             },
@@ -117,19 +116,21 @@ fun CustomTunableScreen(
         )
     }
 
-    if (showDeleteDialog && deletingTunable != null) {
-        ConfirmDeleteDialog(
-            tunablePath = deletingTunable!!.path,
-            onConfirm = {
-                viewModel.deleteTunable(deletingTunable!!)
-                showDeleteDialog = false
-                deletingTunable = null
-            },
-            onDismiss = {
-                showDeleteDialog = false
-                deletingTunable = null
-            }
-        )
+    if (showDeleteDialog) {
+        deletingTunable?.let { tunable ->
+            ConfirmDeleteDialog(
+                tunablePath = tunable.path,
+                onConfirm = {
+                    viewModel.deleteTunable(tunable)
+                    showDeleteDialog = false
+                    deletingTunable = null
+                },
+                onDismiss = {
+                    showDeleteDialog = false
+                    deletingTunable = null
+                }
+            )
+        }
     }
 }
 

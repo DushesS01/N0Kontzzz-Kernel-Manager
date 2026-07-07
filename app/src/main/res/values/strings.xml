@@ -97,15 +97,31 @@
     <!-- Tuning Feature Info Dialog strings -->
     <string name="tuning_feature_info_title">Tuning Feature Information</string>
     <string name="tuning_feature_performance_mode_title">Performance Mode</string>
-    <string name="tuning_feature_performance_mode_desc">Provides configuration presets to optimize the system based on needs: Balanced (schedutil governor) and Performance (performance governor).</string>
+    <string name="tuning_feature_performance_mode_desc">Quick presets that set the CPU governor across all clusters at once. Balanced uses schedutil (good all-rounder), Performance locks to the highest frequency, Powersave locks to the lowest.</string>
     <string name="tuning_feature_cpu_governor_title">CPU Governor</string>
-    <string name="tuning_feature_cpu_governor_desc">Controls how CPU frequency scales up or down based on workload. Different governors can affect performance and power consumption.</string>
+    <string name="tuning_feature_cpu_governor_desc">Decides how fast the CPU ramps up or down in response to load. schedutil tracks workload closely; performance always runs at max; powersave always runs at min; conservative ramps up slowly to save power.</string>
+    <string name="tuning_feature_cpu_freq_title">CPU Frequency</string>
+    <string name="tuning_feature_cpu_freq_desc">Sets the minimum and maximum clock speed for each CPU cluster (Little/Big/Prime). A higher minimum improves responsiveness; a lower maximum saves battery and reduces heat.</string>
+    <string name="tuning_feature_core_control_title">Core Control</string>
+    <string name="tuning_feature_core_control_desc">Enables or disables individual CPU cores. Disabling a core can reduce heat and power draw; re-enabling it restores full parallel throughput. Core 0 cannot be disabled.</string>
     <string name="tuning_feature_gpu_control_title">GPU Control</string>
-    <string name="tuning_feature_gpu_control_desc">Adjusts various GPU-related parameters like maximum frequency, GPU governor, and others to optimize graphics performance or power efficiency.</string>
+    <string name="tuning_feature_gpu_control_desc">Tunes the GPU governor, min/max frequency, and power level. Higher frequencies improve graphics smoothness; lower ones save battery. Most noticeable in games and heavy UI rendering.</string>
     <string name="tuning_feature_thermal_title">Thermal</string>
-    <string name="tuning_feature_thermal_desc">Manages device temperature limits. Adjustments here can help prevent throttling (performance reduction due to overheating) or, conversely, allow higher performance at the risk of higher temperatures.</string>
+    <string name="tuning_feature_thermal_desc">Applies a thermal profile that controls how aggressively the kernel throttles the CPU and GPU under heat. Conservative profiles protect the hardware; permissive profiles allow sustained peak performance at higher temps.</string>
+    <string name="tuning_feature_zram_title">ZRAM</string>
+    <string name="tuning_feature_zram_desc">A compressed RAM disk used as swap. Enabling ZRAM and increasing its size lets the system keep more apps in memory. The compression algorithm (lz4, zstd, etc.) trades CPU overhead for compression ratio.</string>
     <string name="tuning_feature_swappiness_title">Swappiness</string>
-    <string name="tuning_feature_swappiness_desc">Controls how aggressively the kernel moves data from RAM to zRAM/swap. A higher value means more aggressive swapping (can save active RAM but is slower), a lower value keeps data in RAM longer.</string>
+    <string name="tuning_feature_swappiness_desc">How eagerly the kernel moves pages from RAM to ZRAM/swap. Lower values (e.g. 10–40) keep more data in RAM for snappier multitasking; higher values (60–100) free RAM sooner at the cost of extra CPU for decompression.</string>
+    <string name="tuning_feature_dirty_ratio_title">Dirty Ratio</string>
+    <string name="tuning_feature_dirty_ratio_desc">The percentage of RAM that can hold unwritten (dirty) data before the kernel forces a flush to storage. A higher ratio batches more writes for throughput; a lower ratio flushes more often, reducing data-loss risk on sudden power-off.</string>
+    <string name="tuning_feature_dirty_bg_ratio_title">Dirty Background Ratio</string>
+    <string name="tuning_feature_dirty_bg_ratio_desc">The threshold at which the kernel quietly starts flushing dirty pages in the background. Must be lower than Dirty Ratio. Tuning this shifts when background I/O begins without blocking the foreground.</string>
+    <string name="tuning_feature_writeback_title">Dirty Writeback Interval</string>
+    <string name="tuning_feature_writeback_desc">How often (in seconds) the kernel wakes up to flush dirty pages to storage. Longer intervals reduce wake-ups and save power; shorter ones keep on-disk state more current.</string>
+    <string name="tuning_feature_dirty_expire_title">Dirty Expire</string>
+    <string name="tuning_feature_dirty_expire_desc">How long (in centiseconds) a dirty page can stay in memory before it must be written. Lowering this caps the age of unwritten data; raising it defers I/O for better throughput.</string>
+    <string name="tuning_feature_min_free_title">Min Free Memory</string>
+    <string name="tuning_feature_min_free_desc">The minimum amount of RAM (in KB) the kernel reserves as a free buffer. A higher value gives the kernel more headroom to handle sudden allocations without triggering the OOM killer; too high wastes usable memory.</string>
 
     <string name="kernel_verification_title">Kernel Not Supported</string>
     <string name="kernel_verification_desc">This application only supports N0Kontzzz, N0kernel, Lunar, FusionX, E404R, perf+, Oxygen+, and dead-butterflies.</string>

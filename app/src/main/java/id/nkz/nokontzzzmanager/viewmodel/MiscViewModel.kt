@@ -185,14 +185,31 @@ class MiscViewModel @Inject constructor(
             // Check Background Blocker
             val bgBlockerAvailable = systemRepository.isBgBlockerAvailable()
             if (bgBlockerAvailable) {
-                var currentBlocklist = systemRepository.getBgBlocklist()
-                if (currentBlocklist.isBlank()) {
-                    currentBlocklist = preferenceManager.getBgBlocklist() ?: "com.shopee.id,com.lazada.android,com.tokopedia.tkpd"
-                    // If even prefs is empty, use default and apply it to kernel
-                    systemRepository.setBgBlocklist(currentBlocklist)
+                val kernelBlocklist = systemRepository.getBgBlocklist()
+                val prefBlocklist = preferenceManager.getBgBlocklist()
+                
+                // Priority:
+                // 1. If kernel has data, use it.
+                // 2. If kernel is empty but prefs has data (even empty string ""), use prefs and sync to kernel.
+                // 3. If both are empty/null, use defaults.
+                
+                val finalBlocklist = when {
+                    kernelBlocklist.isNotBlank() -> kernelBlocklist
+                    prefBlocklist != null -> {
+                        // Pref exists (even if empty), sync it to kernel
+                        systemRepository.setBgBlocklist(prefBlocklist)
+                        prefBlocklist
+                    }
+                    else -> {
+                        // First time or reset: use defaults
+                        val defaultList = "com.shopee.id,com.lazada.android,com.tokopedia.tkpd"
+                        systemRepository.setBgBlocklist(defaultList)
+                        defaultList
+                    }
                 }
-                _bgBlocklist.value = currentBlocklist
-                preferenceManager.setBgBlocklist(currentBlocklist)
+                
+                _bgBlocklist.value = finalBlocklist
+                preferenceManager.setBgBlocklist(finalBlocklist)
                 _isBgBlockerAvailable.value = true
             } else {
                 _isBgBlockerAvailable.value = false
