@@ -17,7 +17,7 @@
     <string name="tuning">Tuning</string>
     <string name="misc">Lainnya</string>
     <string name="info">Info</string>
-    <string name="github_link">https://github.com/bimoalfarrabi/kernel_xiaomi_sm8250_n0kontzz</string>
+    <string name="github_link">https://github.com/deutereium/xiaomi_sm8150_kernel_e404</string>
     <string name="telegram_link">https://t.me/n0kontzzz</string>
     <string name="reboot_system">Mulai Ulang Sistem</string>
     <string name="reboot_bootloader">Mulai Ulang ke Bootloader</string>

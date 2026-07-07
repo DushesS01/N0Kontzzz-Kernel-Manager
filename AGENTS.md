@@ -13,7 +13,7 @@
 | Version | 2.0.0-beta (versionCode 120) |
 | License | GPL-3.0 |
 | Target hardware | Kona (SM8250) — POCO X3 Pro (vayu); extended to other Snapdragon/MediaTek SOCs |
-| Supported kernels | N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, dead-butterflies |
+| Supported kernels | N0Kontzzz, N0kernel, FusionX, Lunar, E404R, perf+, Oxygen+, dead-butterflies, e404 |
 | Official repo | `bimoalfarrabi/N0Kontzzz-Kernel-Manager` |
 | Origin | Fork of [Xtra Kernel Manager](https://github.com/Gustyx-Power/Xtra-Kernel-Manager) by Gustyx-Power |
 
