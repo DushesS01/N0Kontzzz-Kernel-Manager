@@ -14,12 +14,13 @@ configure <com.android.build.api.dsl.ApplicationExtension> {
         applicationId = "id.nkz.nokontzzzmanager"
         minSdk = 31
         targetSdk = 36
-        versionCode = 106
-        versionName = "1.7.0"
+        versionCode = 120
+        versionName = "2.0.0-beta"
     }
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
     }
@@ -37,7 +38,6 @@ configurations.all {
     resolutionStrategy {
         force(libs.guava)
         force(libs.listenablefuture)
-        force(libs.kotlin.metadata.jvm)
     }
     exclude(group = "com.google.guava", module = "listenablefuture")
 }
