@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BenchmarkEntity::class,
     ],
     version = 14,
-    exportSchema = true,
+    exportSchema = false,
 )
 abstract class BatteryHistoryDatabase : RoomDatabase() {
     abstract fun batteryHistoryDao(): BatteryHistoryDao

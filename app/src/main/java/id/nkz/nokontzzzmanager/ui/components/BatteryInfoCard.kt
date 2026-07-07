@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.sp
 import id.nkz.nokontzzzmanager.R
 import id.nkz.nokontzzzmanager.data.model.BatteryInfo
 import id.nkz.nokontzzzmanager.data.model.DeepSleepInfo
+import java.text.DecimalFormat
 import java.util.Locale
 
 /** Extracted from MergedSystemCard.kt — self-contained battery info card. */
@@ -124,7 +125,7 @@ internal fun BatteryStatsSection(batteryInfo: BatteryInfo, deepSleepInfo: DeepSl
                 SystemStatItem(Icons.Default.ElectricBolt, stringResource(id = R.string.voltage), run {
                     val v = if (batteryInfo.voltage > 0) {
                         val vv = when { batteryInfo.voltage > 1_000_000 -> batteryInfo.voltage / 1_000_000f; batteryInfo.voltage > 1_000 -> batteryInfo.voltage / 1_000f; else -> batteryInfo.voltage }
-                        String.format(Locale.getDefault(), "%.2f", vv).trimEnd('0').trimEnd('.')
+                        DecimalFormat("#.##").format(vv).trimEnd('0').trimEnd('.')
                     } else "0"
                     stringResource(id = R.string.v, v)
                 }, Modifier.weight(1f))
@@ -164,5 +165,6 @@ private fun formatTimeWithSeconds(timeInMillis: Long): String {
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+    val df = DecimalFormat("00")
+    return "${df.format(hours)}:${df.format(minutes)}:${df.format(seconds)}"
 }
