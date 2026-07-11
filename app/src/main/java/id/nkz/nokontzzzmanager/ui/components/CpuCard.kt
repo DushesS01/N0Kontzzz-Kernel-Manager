@@ -109,16 +109,20 @@ private fun CpuHeaderSection(
         val lowerProductBoard = productBoard.lowercase()
         val upperModel = deviceModel.uppercase()
         
-        // Model numbers for munch (POCO F4 / Redmi K40S)
+        // Model numbers for vayu (POCO X3 Pro)
+        val vayuModels = listOf("M2007J20CG", "M2007J20CT")
+        // Model numbers for munch (POCO F4 / Redmi K40S) — secondary fallback
         val munchModels = listOf("22021211RG", "22021211RI", "22021211RC")
         // Model numbers for alioth (POCO F3 / Redmi K40 / Mi 11X)
         val aliothModels = listOf("M2012K11AG", "M2012K11AI", "M2012K11AC")
 
+        val isVayu = lowerCodename == "vayu" || lowerProductBoard == "vayu" || vayuModels.contains(upperModel)
         val isMunch = lowerCodename == "munch" || lowerProductBoard == "munch" || munchModels.contains(upperModel)
         val isAlioth = lowerCodename == "alioth" || lowerProductBoard == "alioth" || aliothModels.contains(upperModel)
 
-        // Prioritaskan deteksi berdasarkan codename asli perangkat (alioth/munch)
+        // Prioritaskan deteksi berdasarkan codename asli perangkat (vayu/alioth/munch)
         val chipName = when {
+            isVayu || upperBoard == "SM8150-AC" -> "Snapdragon® 860"
             isMunch || isAlioth || upperBoard == "SM8250-AC" -> "Snapdragon® 870"
             upperBoard == "SM8250-AB" -> "Snapdragon® 865+"
             upperBoard == "SM8250" -> "Snapdragon® 865"
@@ -133,9 +137,10 @@ private fun CpuHeaderSection(
         }
 
         val (name, sub) = when {
-            isMunch || isAlioth || 
-            upperBoard == "SM8250" || upperBoard == "SM8250-AB" || upperBoard == "SM8250-AC" -> {
+            isVayu || isMunch || isAlioth || 
+            upperBoard == "SM8250" || upperBoard == "SM8250-AB" || upperBoard == "SM8250-AC" || upperBoard == "SM8150-AC" -> {
                 val deviceName = when {
+                    isVayu -> "POCO X3 Pro"
                     isMunch -> "POCO F4 / Redmi K40S"
                     isAlioth -> "Redmi K40 / POCO F3 / Mi 11X"
                     lowerCodename == "apollo" || lowerProductBoard == "apollo" -> "Redmi K30S Ultra / Mi 10T / Pro"

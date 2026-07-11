@@ -13,19 +13,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
-
-// Define blur surface colors directly in this file to avoid import issues
-private object BlurSurfaceColors {
-    // Light theme blur colors
-    val lightBlur = Color(0xFFF7F2FA)
-    val mediumBlur = Color(0xFFEDE7F6)
-    val heavyBlur = Color(0xFFE1D5E7)
-
-    // Dark theme blur colors (optimized for OLED)
-    val darkLightBlur = Color(0xFF1E1E1E)
-    val darkMediumBlur = Color(0xFF2A2A2A)
-    val darkHeavyBlur = Color(0xFF363636)
-}
+import id.nkz.nokontzzzmanager.ui.theme.BlurSurfaceColors
 
 /**
  * Glassmorphism surface component for modern glass-like UI effects

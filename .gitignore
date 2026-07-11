@@ -13,4 +13,11 @@
 .externalNativeBuild
 .cxx
 local.properties
+gradle.properties
 .hprof
+
+# Release artifacts
+/app/release/
+
+# Agent workspace
+.omo/

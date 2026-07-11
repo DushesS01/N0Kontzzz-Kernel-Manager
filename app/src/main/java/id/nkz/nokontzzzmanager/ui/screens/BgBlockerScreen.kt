@@ -334,7 +334,7 @@ fun BlockedAppItem(
         ) {
             if (appInfo.second != null) {
                 Image(
-                    painter = rememberDrawablePainter(appInfo.second!!),
+                    painter = rememberDrawablePainter(appInfo.second),
                     contentDescription = null,
                     modifier = Modifier.size(48.dp)
                 )

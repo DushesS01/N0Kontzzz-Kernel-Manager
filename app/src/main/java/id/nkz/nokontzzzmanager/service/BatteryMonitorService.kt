@@ -102,6 +102,9 @@ class BatteryMonitorService : Service() {
     private var windowAccumMs: Long = 0L // Accumulated window time from previous sessions (for reboot persistence)
     private var awakeAccumMs: Long = 0L // Accumulated awake (uptime) from previous sessions
     private var nextDelayOverrideMs: Long? = null
+
+    // Cached battery intent to avoid repeated registerReceiver calls in the polling loop
+    private var cachedBatteryIntent: android.content.Intent? = null
     
     // Cache for Charging Control to reduce File I/O
     private var lastKnownBypassState: Boolean? = null
@@ -246,7 +249,7 @@ class BatteryMonitorService : Service() {
 
         val pm = getSystemService(POWER_SERVICE) as PowerManager
 
-        monitoringJob = scope.launch(Dispatchers.Main.immediate) {
+        monitoringJob = scope.launch(Dispatchers.IO) {
             // Initial update
             try {
                 val stats = withContext(Dispatchers.IO) { collectSystemStats() }
@@ -264,8 +267,8 @@ class BatteryMonitorService : Service() {
                     Log.e("BatteryMonitorService", "Error in monitoring loop", e)
                 }
                 
-                // Adaptive delay: 5s if screen on, 60s if screen off
-                val d = nextDelayOverrideMs ?: if (pm.isInteractive) 5_000L else 60_000L
+                // Adaptive delay: 10s if screen on, 60s if screen off
+                val d = nextDelayOverrideMs ?: if (pm.isInteractive) 10_000L else 60_000L
                 nextDelayOverrideMs = null
                 delay(d)
             }
@@ -277,7 +280,7 @@ class BatteryMonitorService : Service() {
         if (!immediate && now - lastManualUpdateTime < MANUAL_UPDATE_THROTTLE_MS) return
         lastManualUpdateTime = now
         
-        scope.launch(Dispatchers.Main.immediate) {
+        scope.launch(Dispatchers.IO) {
             try {
                 Log.d("BatteryMonitorService", "Triggering manual update (immediate=$immediate)")
                 val stats = withContext(Dispatchers.IO) { collectSystemStats() }
@@ -291,9 +294,10 @@ class BatteryMonitorService : Service() {
     private fun initBatteryTracking() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
-                    triggerManualUpdate(immediate = false)
+                if (intent != null) {
+                    cachedBatteryIntent = intent
                 }
+                triggerManualUpdate(immediate = false)
             }
         }
         batteryReceiver = receiver
@@ -304,7 +308,7 @@ class BatteryMonitorService : Service() {
     private fun collectSystemStats(): BatteryData {
         val bm = batteryManager ?: return BatteryData()
 
-        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val intent = cachedBatteryIntent ?: registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0

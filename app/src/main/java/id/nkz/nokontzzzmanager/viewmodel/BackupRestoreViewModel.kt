@@ -1,15 +1,21 @@
-package id.nkz.nokontzzzmanager.ui.viewmodel
+package id.nkz.nokontzzzmanager.viewmodel
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import id.nkz.nokontzzzmanager.R
+import id.nkz.nokontzzzmanager.data.model.BackupPreview
+import id.nkz.nokontzzzmanager.data.repository.BackupRepository
 import id.nkz.nokontzzzmanager.service.BatteryMonitorService
 import id.nkz.nokontzzzmanager.ui.theme.ThemeMode
-import id.nkz.nokontzzzmanager.utils.ThemeManager
 import id.nkz.nokontzzzmanager.utils.PreferenceManager
+import id.nkz.nokontzzzmanager.utils.ThemeManager
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,17 +23,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-import id.nkz.nokontzzzmanager.data.repository.BackupRepository
-import id.nkz.nokontzzzmanager.R
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-
-import android.net.Uri
-
-import id.nkz.nokontzzzmanager.data.model.BackupPreview
-
 @HiltViewModel
-class SettingsViewModel @Inject constructor(
+class BackupRestoreViewModel @Inject constructor(
     private val themeManager: ThemeManager,
     private val preferenceManager: PreferenceManager,
     private val backupRepository: BackupRepository,

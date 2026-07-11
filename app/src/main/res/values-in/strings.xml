@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">NKM</string>
+    <string name="app_name">N0Kontzzz Vayu Kernel Manager</string>
     <string name="desc_about">Terima kasih telah memilih N0Kontzzz Kernel Manager. Semoga Anda menikmati pengalamannya!</string>
     <string name="about">Tentang Aplikasi</string>
     <string name="telegram">Telegram</string>
@@ -17,7 +17,7 @@
     <string name="tuning">Tuning</string>
     <string name="misc">Lainnya</string>
     <string name="info">Info</string>
-    <string name="github_link">https://github.com/bimoalfarrabi/kernel_xiaomi_sm8250_n0kontzz</string>
+    <string name="github_link">https://github.com/deutereium/xiaomi_sm8150_kernel_e404</string>
     <string name="telegram_link">https://t.me/n0kontzzz</string>
     <string name="reboot_system">Mulai Ulang Sistem</string>
     <string name="reboot_bootloader">Mulai Ulang ke Bootloader</string>
@@ -98,15 +98,31 @@
     <!-- Tuning Feature Info Dialog strings -->
     <string name="tuning_feature_info_title">Informasi Fitur Tuning</string>
     <string name="tuning_feature_performance_mode_title">Mode Performa</string>
-    <string name="tuning_feature_performance_mode_desc">Menyediakan preset konfigurasi untuk mengoptimalkan sistem sesuai kebutuhan: Seimbang (schedutil governor) dan Performa (performance governor).</string>
+    <string name="tuning_feature_performance_mode_desc">Preset cepat yang mengatur governor CPU di semua klaster sekaligus. Seimbang menggunakan schedutil (cocok untuk sehari-hari), Performa mengunci ke frekuensi tertinggi, Hemat Daya mengunci ke frekuensi terendah.</string>
     <string name="tuning_feature_cpu_governor_title">Governor CPU</string>
-    <string name="tuning_feature_cpu_governor_desc">Mengontrol bagaimana frekuensi CPU naik turun berdasarkan beban kerja. Berbagai governor dapat memengaruhi performa dan konsumsi daya.</string>
+    <string name="tuning_feature_cpu_governor_desc">Menentukan seberapa cepat CPU naik atau turun frekuensi sesuai beban. schedutil mengikuti beban secara dekat; performance selalu di maks; powersave selalu di min; conservative naik perlahan untuk hemat daya.</string>
+    <string name="tuning_feature_cpu_freq_title">Frekuensi CPU</string>
+    <string name="tuning_feature_cpu_freq_desc">Mengatur batas frekuensi minimum dan maksimum untuk setiap klaster CPU (Little/Big/Prime). Minimum lebih tinggi meningkatkan respons; maksimum lebih rendah menghemat baterai dan mengurangi panas.</string>
+    <string name="tuning_feature_core_control_title">Kontrol Core</string>
+    <string name="tuning_feature_core_control_desc">Mengaktifkan atau menonaktifkan core CPU secara individual. Menonaktifkan core dapat mengurangi panas dan konsumsi daya; mengaktifkannya kembali memulihkan kapasitas paralel penuh. Core 0 tidak bisa dinonaktifkan.</string>
     <string name="tuning_feature_gpu_control_title">Kontrol GPU</string>
-    <string name="tuning_feature_gpu_control_desc">Mengatur berbagai parameter terkait GPU seperti frekuensi maksimum, governor GPU, dan lainnya untuk mengoptimalisasi performa grafis atau efisiensi daya.</string>
+    <string name="tuning_feature_gpu_control_desc">Menyetel governor GPU, batas frekuensi min/maks, dan level daya. Frekuensi lebih tinggi meningkatkan kelancaran grafis; lebih rendah menghemat baterai. Paling terasa di game dan rendering UI berat.</string>
     <string name="tuning_feature_thermal_title">Termal</string>
-    <string name="tuning_feature_thermal_desc">Mengelola batas suhu perangkat. Penyesuaian di sini dapat mencegah throttling (penurunan performa karena panas berlebih) atau sebaliknya mengizinkan performa lebih tinggi dengan risiko suhu lebih panas.</string>
+    <string name="tuning_feature_thermal_desc">Menerapkan profil termal yang mengatur seberapa agresif kernel membatasi CPU dan GPU saat panas. Profil konservatif melindungi hardware; profil permisif memungkinkan performa puncak yang berkelanjutan pada suhu lebih tinggi.</string>
+    <string name="tuning_feature_zram_title">ZRAM</string>
+    <string name="tuning_feature_zram_desc">Disk RAM terkompresi yang digunakan sebagai swap. Mengaktifkan ZRAM dan memperbesar ukurannya memungkinkan sistem menyimpan lebih banyak aplikasi di memori. Algoritma kompresi (lz4, zstd, dll.) menukar overhead CPU dengan rasio kompresi.</string>
     <string name="tuning_feature_swappiness_title">Swappiness</string>
-    <string name="tuning_feature_swappiness_desc">Mengontrol seberapa agresif kernel memindahkan data dari RAM ke zRAM/swap. Nilai tinggi berarti swapping lebih agresif (menghemat RAM aktif tapi lebih lambat), nilai rendah mempertahankan data di RAM lebih lama.</string>
+    <string name="tuning_feature_swappiness_desc">Seberapa cepat kernel memindahkan halaman dari RAM ke ZRAM/swap. Nilai rendah (mis. 10–40) mempertahankan lebih banyak data di RAM untuk multitasking yang lebih responsif; nilai tinggi (60–100) membebaskan RAM lebih cepat dengan biaya CPU tambahan untuk dekompresi.</string>
+    <string name="tuning_feature_dirty_ratio_title">Dirty Ratio</string>
+    <string name="tuning_feature_dirty_ratio_desc">Persentase RAM yang boleh menampung data belum ditulis (dirty) sebelum kernel memaksa flush ke penyimpanan. Nilai lebih tinggi menggabungkan lebih banyak penulisan untuk throughput; nilai lebih rendah flush lebih sering, mengurangi risiko kehilangan data saat mati mendadak.</string>
+    <string name="tuning_feature_dirty_bg_ratio_title">Dirty Background Ratio</string>
+    <string name="tuning_feature_dirty_bg_ratio_desc">Ambang batas di mana kernel mulai diam-diam mem-flush halaman dirty di latar belakang. Harus lebih rendah dari Dirty Ratio. Mengaturnya menggeser kapan I/O latar belakang dimulai tanpa memblokir foreground.</string>
+    <string name="tuning_feature_writeback_title">Interval Dirty Writeback</string>
+    <string name="tuning_feature_writeback_desc">Seberapa sering (dalam detik) kernel bangun untuk mem-flush halaman dirty ke penyimpanan. Interval lebih panjang mengurangi wake-up dan menghemat daya; lebih pendek menjaga status on-disk lebih terkini.</string>
+    <string name="tuning_feature_dirty_expire_title">Dirty Expire</string>
+    <string name="tuning_feature_dirty_expire_desc">Berapa lama (dalam centidetik) halaman dirty boleh tinggal di memori sebelum harus ditulis. Menurunkan ini membatasi usia data yang belum ditulis; menaikkannya menunda I/O untuk throughput lebih baik.</string>
+    <string name="tuning_feature_min_free_title">Min Free Memory</string>
+    <string name="tuning_feature_min_free_desc">Jumlah minimum RAM (dalam KB) yang dicadangkan kernel sebagai buffer bebas. Nilai lebih tinggi memberi kernel lebih banyak ruang untuk menangani alokasi mendadak tanpa memicu OOM killer; terlalu tinggi membuang memori yang bisa digunakan.</string>
 
     <string name="kernel_verification_title">Kernel Tidak Didukung</string>
     <string name="kernel_verification_desc">Aplikasi ini hanya mendukung N0Kontzzz, N0kernel, Lunar, FusionX, E404R, perf+, Oxygen+, dan dead-butterflies.</string>

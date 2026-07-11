@@ -27,7 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -305,9 +305,10 @@ fun FpsMonitorScreen(
             }
         }
 
-        if (selectedBenchmark != null) {
+        val sb = selectedBenchmark
+        if (sb != null) {
             BenchmarkDetailDialog(
-                benchmark = selectedBenchmark!!,
+                benchmark = sb,
                 onDismiss = { selectedBenchmark = null }
             )
         }

@@ -1,4 +1,4 @@
-package id.nkz.nokontzzzmanager.ui.viewmodel
+package id.nkz.nokontzzzmanager.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

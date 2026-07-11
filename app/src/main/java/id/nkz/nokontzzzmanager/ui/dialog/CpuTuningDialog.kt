@@ -39,6 +39,14 @@ import id.nkz.nokontzzzmanager.viewmodel.AppProfilesViewModel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+private sealed interface CpuTuningDialogState {
+    data class Governor(val cluster: String) : CpuTuningDialogState
+    data class MinFreq(val cluster: String) : CpuTuningDialogState
+    data class MaxFreq(val cluster: String) : CpuTuningDialogState
+    data object CoreStatus : CpuTuningDialogState
+    data object None : CpuTuningDialogState
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CpuTuningDialog(
@@ -52,10 +60,7 @@ fun CpuTuningDialog(
     val clusters = viewModel.cpuClusters
     val coreStates by viewModel.coreStates.collectAsStateWithLifecycle()
 
-    var showGovernorDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showMinFreqDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showMaxFreqDialogForCluster by remember { mutableStateOf<String?>(null) }
-    var showCoreDialog by remember { mutableStateOf(false) }
+    var activeDialog: CpuTuningDialogState by remember { mutableStateOf(CpuTuningDialogState.None) }
     var showResetFeedback by remember { mutableStateOf(false) }
 
     LaunchedEffect(showResetFeedback) {
@@ -140,9 +145,9 @@ fun CpuTuningDialog(
                                 clusterName = clusterName,
                                 config = clusterConfig,
                                 shape = shape,
-                                onGovernorClick = { showGovernorDialogForCluster = clusterName },
-                                onMinFrequencyClick = { showMinFreqDialogForCluster = clusterName },
-                                onMaxFrequencyClick = { showMaxFreqDialogForCluster = clusterName }
+                                onGovernorClick = { activeDialog = CpuTuningDialogState.Governor(clusterName) },
+                                onMinFrequencyClick = { activeDialog = CpuTuningDialogState.MinFreq(clusterName) },
+                                onMaxFrequencyClick = { activeDialog = CpuTuningDialogState.MaxFreq(clusterName) }
                             )
                         }
                         
@@ -156,7 +161,7 @@ fun CpuTuningDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { showCoreDialog = true }
+                                        .clickable { activeDialog = CpuTuningDialogState.CoreStatus }
                                         .padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -278,74 +283,74 @@ fun CpuTuningDialog(
     }
 
     // Sub-dialogs
-    if (showGovernorDialogForCluster != null) {
-        val cluster = showGovernorDialogForCluster!!
-        val availableGovernors by viewModel.getAvailableCpuGovernors(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
-        val current = config.clusterConfigs[cluster]?.governor ?: ""
+    when (val dialog = activeDialog) {
+        is CpuTuningDialogState.Governor -> {
+            val cluster = dialog.cluster
+            val availableGovernors by viewModel.getAvailableCpuGovernors(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
+            val current = config.clusterConfigs[cluster]?.governor ?: ""
 
-        SelectionDialog(
-            title = stringResource(R.string.cpu_governor_label),
-            subtitle = cluster,
-            items = availableGovernors,
-            selectedItem = current,
-            itemLabel = { it },
-            onItemSelected = { selected ->
-                val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
-                val newMap = config.clusterConfigs.toMutableMap()
-                newMap[cluster] = currentConfig.copy(governor = selected)
-                config = config.copy(clusterConfigs = newMap)
-                showGovernorDialogForCluster = null
-            },
-            onDismiss = { showGovernorDialogForCluster = null }
-        )
-    }
+            SelectionDialog(
+                title = stringResource(R.string.cpu_governor_label),
+                subtitle = cluster,
+                items = availableGovernors,
+                selectedItem = current,
+                itemLabel = { it },
+                onItemSelected = { selected ->
+                    val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
+                    val newMap = config.clusterConfigs.toMutableMap()
+                    newMap[cluster] = currentConfig.copy(governor = selected)
+                    config = config.copy(clusterConfigs = newMap)
+                    activeDialog = CpuTuningDialogState.None
+                },
+                onDismiss = { activeDialog = CpuTuningDialogState.None }
+            )
+        }
 
-    if (showMinFreqDialogForCluster != null) {
-        val cluster = showMinFreqDialogForCluster!!
-        val availableFreqs by viewModel.getAvailableCpuFrequencies(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
-        val current = config.clusterConfigs[cluster]?.minFreq
-        
-        SelectionDialog(
-            title = stringResource(R.string.set_min_frequency),
-            subtitle = cluster,
-            items = availableFreqs,
-            selectedItem = current,
-            itemLabel = { stringResource(R.string.app_profiles_mhz_suffix, it / 1000) },
-            onItemSelected = { selected ->
-                val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
-                val newMap = config.clusterConfigs.toMutableMap()
-                newMap[cluster] = currentConfig.copy(minFreq = selected)
-                config = config.copy(clusterConfigs = newMap)
-                showMinFreqDialogForCluster = null
-            },
-            onDismiss = { showMinFreqDialogForCluster = null }
-        )
-    }
+        is CpuTuningDialogState.MinFreq -> {
+            val cluster = dialog.cluster
+            val availableFreqs by viewModel.getAvailableCpuFrequencies(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
+            val current = config.clusterConfigs[cluster]?.minFreq
 
-    if (showMaxFreqDialogForCluster != null) {
-        val cluster = showMaxFreqDialogForCluster!!
-        val availableFreqs by viewModel.getAvailableCpuFrequencies(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
-        val current = config.clusterConfigs[cluster]?.maxFreq
+            SelectionDialog(
+                title = stringResource(R.string.set_min_frequency),
+                subtitle = cluster,
+                items = availableFreqs,
+                selectedItem = current,
+                itemLabel = { stringResource(R.string.app_profiles_mhz_suffix, it / 1000) },
+                onItemSelected = { selected ->
+                    val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
+                    val newMap = config.clusterConfigs.toMutableMap()
+                    newMap[cluster] = currentConfig.copy(minFreq = selected)
+                    config = config.copy(clusterConfigs = newMap)
+                    activeDialog = CpuTuningDialogState.None
+                },
+                onDismiss = { activeDialog = CpuTuningDialogState.None }
+            )
+        }
 
-        SelectionDialog(
-            title = stringResource(R.string.set_max_frequency),
-            subtitle = cluster,
-            items = availableFreqs,
-            selectedItem = current,
-            itemLabel = { stringResource(R.string.app_profiles_mhz_suffix, it / 1000) },
-            onItemSelected = { selected ->
-                val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
-                val newMap = config.clusterConfigs.toMutableMap()
-                newMap[cluster] = currentConfig.copy(maxFreq = selected)
-                config = config.copy(clusterConfigs = newMap)
-                showMaxFreqDialogForCluster = null
-            },
-            onDismiss = { showMaxFreqDialogForCluster = null }
-        )
-    }
+        is CpuTuningDialogState.MaxFreq -> {
+            val cluster = dialog.cluster
+            val availableFreqs by viewModel.getAvailableCpuFrequencies(cluster).collectAsStateWithLifecycle(initialValue = emptyList())
+            val current = config.clusterConfigs[cluster]?.maxFreq
 
-    if (showCoreDialog) {
-        CoreConfigDialog(
+            SelectionDialog(
+                title = stringResource(R.string.set_max_frequency),
+                subtitle = cluster,
+                items = availableFreqs,
+                selectedItem = current,
+                itemLabel = { stringResource(R.string.app_profiles_mhz_suffix, it / 1000) },
+                onItemSelected = { selected ->
+                    val currentConfig = config.clusterConfigs[cluster] ?: ClusterConfig()
+                    val newMap = config.clusterConfigs.toMutableMap()
+                    newMap[cluster] = currentConfig.copy(maxFreq = selected)
+                    config = config.copy(clusterConfigs = newMap)
+                    activeDialog = CpuTuningDialogState.None
+                },
+                onDismiss = { activeDialog = CpuTuningDialogState.None }
+            )
+        }
+
+        is CpuTuningDialogState.CoreStatus -> CoreConfigDialog(
             coreStates = coreStates,
             configuredStates = config.coreOnlineStatus,
             onCoreToggled = { index, enabled ->
@@ -353,8 +358,10 @@ fun CpuTuningDialog(
                 newMap[index] = enabled
                 config = config.copy(coreOnlineStatus = newMap)
             },
-            onDismiss = { showCoreDialog = false }
+            onDismiss = { activeDialog = CpuTuningDialogState.None }
         )
+
+        is CpuTuningDialogState.None -> { /* no dialog */ }
     }
 }
 

@@ -1,4 +1,4 @@
-package id.nkz.nokontzzzmanager.ui.screens
+package id.nkz.nokontzzzmanager.ui.dialog
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable

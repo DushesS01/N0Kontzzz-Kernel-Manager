@@ -116,7 +116,7 @@ class AppMonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d("AppMonitorService", "onStartCommand received")
-        if (monitorJob == null || !monitorJob!!.isActive) {
+        if (monitorJob?.isActive != true) {
             startMonitoring()
         }
         return START_STICKY

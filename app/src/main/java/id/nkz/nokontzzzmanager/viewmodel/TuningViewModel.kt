@@ -1,9 +1,7 @@
 package id.nkz.nokontzzzmanager.viewmodel
 
 import android.app.Application
-import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -32,18 +30,12 @@ class TuningViewModel @Inject constructor(
     private val preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
-    private val thermalPrefs: SharedPreferences by lazy {
-        application.getSharedPreferences("thermal_settings_prefs", Context.MODE_PRIVATE)
-    }
-    // performancePrefs removed
-    private val KEY_LAST_APPLIED_THERMAL_INDEX = "last_applied_thermal_index"
-    // KEY_LAST_APPLIED_PERFORMANCE_MODE removed
-
+    // ponytail: Poco F4 static fallback; replaced by fetchDynamicCpuClusters() at runtime
     val cpuClusters = listOf("cpu0", "cpu4", "cpu7")
 
     //<editor-fold desc="StateFlows">
     // Dynamic cluster information with proper names
-    private val _dynamicCpuClusters = MutableStateFlow<List<String>>(emptyList())
+    private val _dynamicCpuClusters = MutableStateFlow<List<String>>(cpuClusters)
     val dynamicCpuClusters: StateFlow<List<String>> = _dynamicCpuClusters.asStateFlow()
 
     // UI State for card expansion
@@ -108,16 +100,8 @@ class TuningViewModel @Inject constructor(
     val generalAvailableCpuGovernors: StateFlow<List<String>> = _generalAvailableCpuGovernors.asStateFlow()
 
     private val _availableCpuFrequenciesPerClusterMap = MutableStateFlow<Map<String, List<Int>>>(emptyMap())
-    private val _currentCpuGovernors = mutableMapOf<String, MutableStateFlow<String>>()
-    private val _currentCpuFrequencies = mutableMapOf<String, MutableStateFlow<Pair<Int, Int>>>()
-
-    // Initialize these eagerly to ensure non-null flows for combine
-    init {
-        cpuClusters.forEach { cluster ->
-            _currentCpuGovernors.getOrPut(cluster) { MutableStateFlow("...") }
-            _currentCpuFrequencies.getOrPut(cluster) { MutableStateFlow(0 to 0) }
-        }
-    }
+    private val _currentCpuGovernors = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<String>>()
+    private val _currentCpuFrequencies = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<Pair<Int, Int>>>()
 
     // Logic to validate active performance mode based on real-time governor state
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -251,8 +235,26 @@ class TuningViewModel @Inject constructor(
     /* ---------------- Init ---------------- */
     init {
         Log.d("TuningVM_Init", "ViewModel initializing...")
-        // initializeCpuStateFlows() // Removed as it is handled in the field declaration init
+        // Pre-seed cluster state from cached prefs so UI shows instantly (no "...")
+        cpuClusters.forEach { cluster ->
+            val cachedGov = preferenceManager.getCpuGov(cluster)
+            val gov = if (!cachedGov.isNullOrEmpty()) cachedGov
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_governor").readText().trim() }.getOrNull()
+            if (!gov.isNullOrEmpty()) {
+                _currentCpuGovernors.getOrPut(cluster) { MutableStateFlow("...") }.value = gov
+            }
+            val cachedMin = preferenceManager.getCpuMinFreq(cluster)
+            val cachedMax = preferenceManager.getCpuMaxFreq(cluster)
+            val min = if (cachedMin > 0) cachedMin
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_min_freq").readText().trim().toLong().div(1000).toInt() }.getOrElse { -1 }
+            val max = if (cachedMax > 0) cachedMax
+                      else runCatching { java.io.File("/sys/devices/system/cpu/$cluster/cpufreq/scaling_max_freq").readText().trim().toLong().div(1000).toInt() }.getOrElse { -1 }
+            if (min > 0 && max > 0) {
+                _currentCpuFrequencies.getOrPut(cluster) { MutableStateFlow(0 to 0) }.value = min to max
+            }
+        }
         fetchDynamicCpuClusters()
+        loadAllData()
         Log.d("TuningVM_Init", "ViewModel initialization complete.")
     }
 
@@ -307,41 +309,32 @@ class TuningViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadCpuData() {
+     private suspend fun loadCpuData() {
         if (isCpuDataLoaded.getAndSet(true)) return
         Log.d("TuningVM_LazyLoad", "Loading CPU data...")
         withContext(Dispatchers.IO) {
             fetchAllCpuData()
             refreshCoreStates()
-            
-            // Wait for dynamic clusters to be loaded
-            while (_dynamicCpuClusters.value.isEmpty()) {
-                delay(50)
-            }
-            val clusters = _dynamicCpuClusters.value
+            selfHealCpu(_dynamicCpuClusters.value)
+        }
+    }
 
-            // Allow time for flows to emit initial values
-            delay(200) 
-            
+    private suspend fun selfHealCpu(clusters: List<String>) {
             // 1. Self-healing for Performance Mode
             if (preferenceManager.isApplyPerformanceModeOnBoot()) {
                 val preferredMode = preferenceManager.getPerformanceMode()
                 val gov0 = _currentCpuGovernors[clusters.first()]?.value
-                
-                // Only act if we have valid governor data
                 if (gov0 != null && gov0 != "...") {
-                    if (preferredMode == "Performance" && gov0 != "performance") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Performance Mode")
+                    val targetGov = when (preferredMode) {
+                        "Performance" -> "performance"
+                        "Powersave"   -> "powersave"
+                        "Balanced"    -> "schedutil"
+                        else          -> null
+                    }
+                    if (targetGov != null && gov0 != targetGov) {
+                        Log.d("TuningVM_SelfHeal", "Re-applying Performance Mode: $preferredMode")
                         onPerformanceModeChange(preferredMode)
-                        return@withContext // Exit to avoid conflict with manual settings below
-                    } else if (preferredMode == "Powersave" && gov0 != "powersave") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Powersave Mode")
-                        onPerformanceModeChange(preferredMode)
-                        return@withContext
-                    } else if (preferredMode == "Balanced" && gov0 != "schedutil") {
-                        Log.d("TuningVM_SelfHeal", "Re-applying Balanced Mode")
-                        onPerformanceModeChange(preferredMode)
-                        return@withContext
+                        return // Exit to avoid conflict with manual settings below
                     }
                 }
             }
@@ -397,7 +390,6 @@ class TuningViewModel @Inject constructor(
                 }
                 refreshCoreStates()
             }
-        }
     }
 
     private suspend fun loadGpuData() {
@@ -407,25 +399,25 @@ class TuningViewModel @Inject constructor(
             fetchGpuData()
             fetchOpenGlesDriver()
             fetchVulkanApiVersion()
+            selfHealGpu()
+        }
+    }
 
-            // Self-healing for GPU
-            if (preferenceManager.isApplyGpuOnBoot()) {
-                val prefGov = preferenceManager.getGpuGovernor()
-                if (prefGov != null && _currentGpuGovernor.value != prefGov) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying GPU Governor: $prefGov")
-                    setGpuGovernor(prefGov)
-                }
-
-                val prefMin = preferenceManager.getGpuMinFreq()
-                val prefMax = preferenceManager.getGpuMaxFreq()
-                if ((prefMin != -1 && _currentGpuMinFreq.value != prefMin) || 
-                    (prefMax != -1 && _currentGpuMaxFreq.value != prefMax)) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying GPU Frequencies")
-                    if (prefMin != -1) repo.setGpuMinFreq(prefMin)
-                    if (prefMax != -1) repo.setGpuMaxFreq(prefMax)
-                    fetchGpuData()
-                }
-            }
+    private suspend fun selfHealGpu() {
+        if (!preferenceManager.isApplyGpuOnBoot()) return
+        val prefGov = preferenceManager.getGpuGovernor()
+        if (prefGov != null && _currentGpuGovernor.value != prefGov) {
+            Log.d("TuningVM_SelfHeal", "Re-applying GPU Governor: $prefGov")
+            setGpuGovernor(prefGov)
+        }
+        val prefMin = preferenceManager.getGpuMinFreq()
+        val prefMax = preferenceManager.getGpuMaxFreq()
+        if ((prefMin != -1 && _currentGpuMinFreq.value != prefMin) ||
+            (prefMax != -1 && _currentGpuMaxFreq.value != prefMax)) {
+            Log.d("TuningVM_SelfHeal", "Re-applying GPU Frequencies")
+            if (prefMin != -1) repo.setGpuMinFreq(prefMin)
+            if (prefMax != -1) repo.setGpuMaxFreq(prefMax)
+            fetchGpuData()
         }
     }
 
@@ -434,70 +426,52 @@ class TuningViewModel @Inject constructor(
         Log.d("TuningVM_LazyLoad", "Loading RAM data...")
         withContext(Dispatchers.IO) {
             fetchRamControlData()
-            
-            // Allow a small delay for flows to update state
-            delay(150)
+            selfHealRam()
+        }
+    }
 
-            // Full Self-healing for RAM
-            if (preferenceManager.isApplyRamOnBoot()) {
-                Log.d("TuningVM_SelfHeal", "Starting RAM Self-healing check")
-                
-                // 1. ZRAM Disksize
-                val prefZramSize = preferenceManager.getZramDisksize()
-                if (prefZramSize != -1L && _zramDisksize.value != prefZramSize) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying ZRAM Size: $prefZramSize")
-                    setZramDisksize(prefZramSize)
-                }
-
-                // 2. Compression Algorithm
-                val prefAlgo = preferenceManager.getZramCompression()
-                if (prefAlgo != null && _currentCompression.value != prefAlgo) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Compression: $prefAlgo")
-                    setCompression(prefAlgo)
-                }
-
-                // 3. Swappiness
-                val prefSwappiness = preferenceManager.getSwappiness()
-                if (prefSwappiness != -1 && _swappiness.value != prefSwappiness) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Swappiness: $prefSwappiness")
-                    setSwappiness(prefSwappiness)
-                }
-
-                // 4. Dirty Ratio
-                val prefDirtyRatio = preferenceManager.getDirtyRatio()
-                if (prefDirtyRatio != -1 && _dirtyRatio.value != prefDirtyRatio) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Ratio: $prefDirtyRatio")
-                    setDirtyRatio(prefDirtyRatio)
-                }
-
-                // 5. Dirty Background Ratio
-                val prefDirtyBg = preferenceManager.getDirtyBackgroundRatio()
-                if (prefDirtyBg != -1 && _dirtyBackgroundRatio.value != prefDirtyBg) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Background Ratio: $prefDirtyBg")
-                    setDirtyBackgroundRatio(prefDirtyBg)
-                }
-
-                // 6. Dirty Writeback
-                val prefWriteback = preferenceManager.getDirtyWriteback()
-                if (prefWriteback != -1 && _dirtyWriteback.value != prefWriteback) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Writeback: $prefWriteback")
-                    setDirtyWriteback(prefWriteback)
-                }
-
-                // 7. Dirty Expire
-                val prefExpire = preferenceManager.getDirtyExpire()
-                if (prefExpire != -1 && _dirtyExpireCentisecs.value != prefExpire) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Dirty Expire: $prefExpire")
-                    setDirtyExpireCentisecs(prefExpire)
-                }
-
-                // 8. Min Free Memory
-                val prefMinFree = preferenceManager.getMinFreeMemory()
-                if (prefMinFree != -1 && _minFreeMemory.value != prefMinFree) {
-                    Log.d("TuningVM_SelfHeal", "Re-applying Min Free Memory: $prefMinFree")
-                    setMinFreeMemory(prefMinFree)
-                }
-            }
+    private suspend fun selfHealRam() {
+        if (!preferenceManager.isApplyRamOnBoot()) return
+        Log.d("TuningVM_SelfHeal", "Starting RAM Self-healing check")
+        val prefZramSize = preferenceManager.getZramDisksize()
+        if (prefZramSize != -1L && _zramDisksize.value != prefZramSize) {
+            Log.d("TuningVM_SelfHeal", "Re-applying ZRAM Size: $prefZramSize")
+            setZramDisksize(prefZramSize)
+        }
+        val prefAlgo = preferenceManager.getZramCompression()
+        if (prefAlgo != null && _currentCompression.value != prefAlgo) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Compression: $prefAlgo")
+            setCompression(prefAlgo)
+        }
+        val prefSwappiness = preferenceManager.getSwappiness()
+        if (prefSwappiness != -1 && _swappiness.value != prefSwappiness) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Swappiness: $prefSwappiness")
+            setSwappiness(prefSwappiness)
+        }
+        val prefDirtyRatio = preferenceManager.getDirtyRatio()
+        if (prefDirtyRatio != -1 && _dirtyRatio.value != prefDirtyRatio) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Ratio: $prefDirtyRatio")
+            setDirtyRatio(prefDirtyRatio)
+        }
+        val prefDirtyBg = preferenceManager.getDirtyBackgroundRatio()
+        if (prefDirtyBg != -1 && _dirtyBackgroundRatio.value != prefDirtyBg) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Background Ratio: $prefDirtyBg")
+            setDirtyBackgroundRatio(prefDirtyBg)
+        }
+        val prefWriteback = preferenceManager.getDirtyWriteback()
+        if (prefWriteback != -1 && _dirtyWriteback.value != prefWriteback) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Writeback: $prefWriteback")
+            setDirtyWriteback(prefWriteback)
+        }
+        val prefExpire = preferenceManager.getDirtyExpire()
+        if (prefExpire != -1 && _dirtyExpireCentisecs.value != prefExpire) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Dirty Expire: $prefExpire")
+            setDirtyExpireCentisecs(prefExpire)
+        }
+        val prefMinFree = preferenceManager.getMinFreeMemory()
+        if (prefMinFree != -1 && _minFreeMemory.value != prefMinFree) {
+            Log.d("TuningVM_SelfHeal", "Re-applying Min Free Memory: $prefMinFree")
+            setMinFreeMemory(prefMinFree)
         }
     }
 
@@ -508,7 +482,7 @@ class TuningViewModel @Inject constructor(
             // Check if "Set on Boot" is enabled for Thermal
             if (preferenceManager.isApplyThermalOnBoot()) {
                 // Prioritize restoring the user's last saved setting.
-                val lastSavedIndex = thermalPrefs.getInt(KEY_LAST_APPLIED_THERMAL_INDEX, -2) // Use -2 to indicate no value saved
+                val lastSavedIndex = preferenceManager.getLastAppliedThermalIndex(-2) // Use -2 to indicate no value saved
 
                 if (lastSavedIndex != -2) {
                     // A profile was previously saved by the user. Restore it.
@@ -543,13 +517,13 @@ class TuningViewModel @Inject constructor(
     private fun fetchDynamicCpuClusters() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Get cluster leaders directly from repository instead of trying to guess/map them
                 val clusters = repo.getClusterLeaders()
-                if (clusters.isNotEmpty()) {
-                    _dynamicCpuClusters.value = clusters
-                } else {
-                    _dynamicCpuClusters.value = cpuClusters
-                }
+                val resolved = if (clusters.isNotEmpty()) clusters else cpuClusters
+                _dynamicCpuClusters.value = resolved
+                // Remove stale pre-seeded entries if dynamic clusters differ from static fallback
+                // ponytail: only needed when device topology differs from Poco F4 fallback
+                val stale = cpuClusters - resolved.toSet()
+                stale.forEach { _currentCpuGovernors.remove(it); _currentCpuFrequencies.remove(it) }
             } catch (e: Exception) {
                 Log.e("TuningViewModel", "Error fetching dynamic CPU clusters", e)
                 _dynamicCpuClusters.value = cpuClusters
@@ -565,39 +539,47 @@ class TuningViewModel @Inject constructor(
         val tempGovernors = mutableMapOf<String, List<String>>()
         val tempFreqs = mutableMapOf<String, List<Int>>()
         
-        // Wait for dynamic clusters to be loaded
-        while (_dynamicCpuClusters.value.isEmpty()) {
-            delay(50)
-        }
-        val clusters = _dynamicCpuClusters.value
+        // Wait for dynamic clusters to be loaded (not just the default fallback)
+        val clusters = _dynamicCpuClusters.first { it.isNotEmpty() }
 
         try {
             coroutineScope {
                 clusters.forEach { cluster ->
                     launch {
                         try {
-                            repo.getCpuGov(cluster).take(1).collect { _currentCpuGovernors[cluster]?.value = it }
+                            repo.getCpuGov(cluster).take(1).collect { gov ->
+                                _currentCpuGovernors[cluster]?.value = gov
+                                // Cache for instant pre-seed on next launch
+                                if (gov.isNotEmpty() && gov != "...") preferenceManager.setCpuGov(cluster, gov)
+                            }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching CPU governor for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getCpuFreq(cluster).take(1).collect { _currentCpuFrequencies[cluster]?.value = it }
+                            repo.getCpuFreq(cluster).take(1).collect { pair ->
+                                _currentCpuFrequencies[cluster]?.value = pair
+                                 // Cache MHz (not raw kHz) for instant pre-seed on next launch
+                                 if (pair.first > 0 && pair.second > 0) {
+                                     preferenceManager.setCpuMinFreq(cluster, pair.first / 1000)
+                                     preferenceManager.setCpuMaxFreq(cluster, pair.second / 1000)
+                                 }
+                            }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching CPU frequency for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getAvailableCpuGovernors(cluster).collect { tempGovernors[cluster] = it }
+                            repo.getAvailableCpuGovernors(cluster).take(1).collect { tempGovernors[cluster] = it }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching available CPU governors for $cluster", e)
                         }
                     }
                     launch {
                         try {
-                            repo.getAvailableCpuFrequencies(cluster).collect { tempFreqs[cluster] = it }
+                            repo.getAvailableCpuFrequencies(cluster).take(1).collect { tempFreqs[cluster] = it }
                         } catch (e: Exception) {
                             Log.e("TuningVM_CPU", "Error fetching available CPU frequencies for $cluster", e)
                         }
@@ -727,7 +709,6 @@ class TuningViewModel @Inject constructor(
             preferenceManager.setGpuMinFreq(freqKHz)
             val (min, _) = repo.getGpuFreq().first()
             _currentGpuMinFreq.value = min
-            fetchGpuData()
         }
     }
 
@@ -736,7 +717,6 @@ class TuningViewModel @Inject constructor(
             preferenceManager.setGpuMaxFreq(freqKHz)
             val (_, max) = repo.getGpuFreq().first()
             _currentGpuMaxFreq.value = max
-            fetchGpuData()
         }
     }
 
@@ -930,23 +910,11 @@ class TuningViewModel @Inject constructor(
         }
     }
 
-    private suspend fun applyLastSavedThermalProfile() {
-        try {
-            val idx = thermalPrefs.getInt(KEY_LAST_APPLIED_THERMAL_INDEX, -1)
-            val profile = thermalRepo.availableThermalProfiles.find { it.index == idx }
-            if (profile != null && _currentThermalModeIndex.value != idx) {
-                setThermalProfileInternal(profile, isRestoring = true)
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
-    }
-
     private suspend fun setThermalProfileInternal(profile: ThermalRepository.ThermalProfile, isRestoring: Boolean) {
         thermalRepo.setThermalModeIndex(profile.index).collect { ok ->
             if (ok) {
                 _currentThermalModeIndex.value = profile.index
-                if (!isRestoring) thermalPrefs.edit { putInt(KEY_LAST_APPLIED_THERMAL_INDEX, profile.index) }
+                if (!isRestoring) preferenceManager.setLastAppliedThermalIndex(profile.index)
                 // For Dynamic mode (10), we need continuous monitoring
                 // For other modes, persistent scripts handle reboot persistence
                 if (profile.index == 10) {
